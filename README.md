@@ -1,95 +1,105 @@
 # Reflex
 
-<img src="assets/icon-256.png" width="96" alt="Icono de Reflex">
+<img src="assets/icon-256.png" width="96" alt="Reflex icon">
 
-Duplica y controla la pantalla de tu móvil en el PC. **Libre, open source y sin límite de tiempo**: sin cuentas, sin anuncios, sin marcas de agua.
+Mirror and control your phone's screen on your PC. **Free, open source, no time limits**: no accounts, no ads, no watermarks.
 
-Escrito en Rust. Funciona en Windows, Linux y macOS.
+Written in Rust. Runs on Windows, Linux and macOS. Available in English and Spanish (it follows your system language and can be changed in Settings).
 
-| Plataforma | Estado |
+| Platform | Status |
 |---|---|
-| Android (USB y Wi-Fi) | ✅ Disponible |
-| iPhone / iPad (AirPlay) | 🚧 En desarrollo, ver [docs/IPHONE.md](docs/IPHONE.md) |
+| Android (USB and Wi-Fi) | Available |
+| Android, cast from the phone (Miracast or Reflex app) | Planned |
+| iPhone / iPad (AirPlay) | In development, see [docs/IPHONE.md](docs/IPHONE.md) |
 
-## Funciones (Android)
+## Features (Android)
 
-- Duplicado de pantalla en tiempo real (H.264, hasta 120 fps)
-- **Control total con ratón y teclado**: toca, arrastra, desplaza con la rueda y escribe
-- **Audio del móvil** en el PC (Android 11+)
-- Conexión por **cable USB** o **Wi-Fi** (botón «Pasar a Wi-Fi» o emparejado con código en Android 11+)
-- Botones de Atrás, Inicio, Recientes, volumen, encendido, girar y notificaciones
-- **Capturas** en PNG y **grabación** en MP4 (sin recomprimir, calidad original)
-- Portapapeles compartido: Ctrl+C / Ctrl+V entre el PC y el móvil
-- Apagar la pantalla del móvil sin dejar de duplicar
-- Pantalla completa (F11)
-- No hay que instalar nada en el móvil
+- Real-time screen mirroring (H.264, up to 120 fps)
+- **Full mouse and keyboard control**: tap, swipe, scroll and type
+- **Phone audio on the PC** (Android 11+), optionally also on the phone (Android 13+)
+- Connect over **USB cable** or **Wi-Fi**: just type the pairing code, Reflex finds the phone on your network
+- The window is the phone itself, with a floating control bar you can hide
+- Resize diagonally keeping the phone's shape, or with Ctrl + mouse wheel; the size is remembered
+- Back, Home, Recents, volume, power, rotate and notifications
+- **Screenshots** (PNG) and **recordings** (MP4, original quality, no re-encoding)
+- Shared clipboard: Ctrl+C / Ctrl+V between PC and phone
+- Turn off the phone's screen while you keep mirroring
+- Full screen (F11)
+- Nothing to install on the phone
 
-## Uso
+## Getting started
 
-1. Descarga Reflex desde [Releases](../../releases) y ábrelo.
-2. La primera vez pulsa **«Descargar componentes»** (adb de Google y el servidor de scrcpy, unos 15 MB).
-3. En el móvil activa la **depuración USB**:
-   *Ajustes → Información del teléfono →* pulsa 7 veces *Número de compilación*, y luego *Opciones de desarrollador → Depuración USB*.
-4. Conecta el cable, acepta el aviso del móvil y pulsa **▶ Duplicar**.
+1. Download Reflex from [Releases](../../releases) and open it.
+2. The first time, click **Download and start** (Google's adb and the scrcpy server, about 15 MB).
+3. Enable **Developer options** on the phone: *Settings, About phone*, tap *Build number* 7 times.
 
-### Sin cable
+### Wireless (Android 11+)
 
-- **Pasar a Wi-Fi**: con el móvil conectado por USB, pulsa «Pasar a Wi-Fi» y después quita el cable. El móvil y el PC tienen que estar en la misma red.
-- **Android 11+**: en *Opciones de desarrollador → Depuración inalámbrica → Vincular con código*, mete la IP:puerto y el código en «Emparejar». Luego conecta con la IP:puerto que aparece en esa misma pantalla.
+1. Connect the phone to the same Wi-Fi as your PC.
+2. In *Developer options*, turn on *Wireless debugging*, open it and tap **Pair device with pairing code**.
+3. In Reflex choose **Wireless** and type the 6-digit code. Done.
 
-### Controles
+### With a cable
 
-| Acción en el PC | En el móvil |
+1. In *Developer options*, turn on *USB debugging*.
+2. Plug in the cable, accept the prompt on the phone and click **Mirror**.
+
+On Xiaomi, Redmi and POCO also enable *USB debugging (Security settings)* or touches will not work.
+
+### Controls
+
+| On the PC | On the phone |
 |---|---|
-| Clic izquierdo / arrastrar | Tocar / deslizar |
-| Clic derecho | Atrás (o encender la pantalla) |
-| Clic central | Inicio |
-| Rueda del ratón | Desplazar |
-| Teclado | Escribir (haz clic antes en la pantalla) |
-| Ctrl+V | Pegar el portapapeles del PC en el móvil |
-| Ctrl+C | Copiar lo seleccionado en el móvil al PC |
-| F11 / Esc | Pantalla completa / salir |
+| Left click / drag | Tap / swipe |
+| Right click | Back (or wake the screen) |
+| Middle click | Home |
+| Mouse wheel | Scroll |
+| Keyboard | Type (click the screen first) |
+| Ctrl+V | Paste the PC clipboard on the phone |
+| Ctrl+C | Copy the phone selection to the PC |
+| Ctrl + mouse wheel | Make the phone bigger or smaller |
+| F11 / Esc | Full screen / exit |
 
-Las capturas se guardan en `Imágenes/Reflex` y las grabaciones en `Vídeos/Reflex`.
+Screenshots are saved to `Pictures/Reflex` and recordings to `Videos/Reflex`.
 
-## Compilar
+## Building
 
-Necesitas [Rust](https://rustup.rs) (1.88 o superior) y un compilador de C/C++ (en Windows, las Build Tools de Visual Studio).
+You need [Rust](https://rustup.rs) 1.88 or newer and a C/C++ compiler (on Windows, the Visual Studio Build Tools).
 
 ```sh
 cargo build --release
 ```
 
-El ejecutable queda en `target/release/reflex(.exe)`. En Linux hacen falta además las cabeceras de ALSA (`libasound2-dev`).
+The executable ends up in `target/release/`. On Linux you also need the ALSA headers (`libasound2-dev`).
 
-Pruebas: `cargo test` (algunas usan `ffmpeg` si está instalado para generar vídeo H.264 real).
+Tests: `cargo test` (some use `ffmpeg`, if installed, to generate real H.264 video).
 
-## Cómo funciona
+## How it works
 
 ```
 ┌──────────── PC (Reflex, Rust) ────────────┐        ┌────── Android ──────┐
-│ egui  ←  OpenH264  ←  socket vídeo  ←──────┼─ adb ──┼── scrcpy-server     │
-│ cpal  ←  PCM 48 kHz ← socket audio  ←──────┼ túnel ─┼── (MediaCodec,      │
-│ ratón/teclado → socket control  ───────────┼───────→┼──  AudioRecord,     │
-└────────────────────────────────────────────┘        │    InputManager)    │
-                                                      └─────────────────────┘
+│ egui  ←  OpenH264  ←  video socket  ←─────┼─ adb ──┼── scrcpy-server     │
+│ cpal  ←  PCM 48 kHz ← audio socket  ←─────┼ tunnel ┼── (MediaCodec,      │
+│ mouse/keyboard → control socket ──────────┼───────→┼──  AudioRecord,     │
+└───────────────────────────────────────────┘        │    InputManager)    │
+                                                     └─────────────────────┘
 ```
 
-- `src/adb.rs`: lista de dispositivos, Wi-Fi, emparejado y túnel.
-- `src/android/`: arranque del servidor y protocolo binario (vídeo, audio y control).
-- `src/video.rs`: decodificación H.264 con OpenH264.
-- `src/audio.rs`: reproducción del audio con cpal.
-- `src/recorder.rs`: grabación MP4.
-- `src/app.rs`: interfaz.
+- `src/adb.rs`: device list, Wi-Fi, pairing, network discovery and tunnel.
+- `src/android/`: server startup and binary protocol (video, audio and control).
+- `src/video.rs`: H.264 decoding with OpenH264.
+- `src/audio.rs`: audio playback with cpal.
+- `src/recorder.rs`: MP4 recording.
+- `src/app.rs`: user interface. `src/i18n.rs`: languages. `src/window.rs`: borderless window on Windows.
 
-En el móvil se usa el servidor de [scrcpy](https://github.com/Genymobile/scrcpy) v5.0.1, que se descarga desde su release oficial y se comprueba con su SHA-256. La parte de PC (interfaz, decodificación, control, audio, grabación) es propia.
+On the phone Reflex uses the [scrcpy](https://github.com/Genymobile/scrcpy) v5.0.1 server, downloaded from its official release and checked against its SHA-256. Everything on the PC side (interface, decoding, control, audio, recording) is Reflex's own code.
 
-## Marca
+## Brand
 
-Icono, colores, tipografía y voz de Reflex en el [manual de marca](docs/marca/README.md).
+Icon, colours, typography and voice are in the [brand manual](docs/marca/README.md) (Spanish).
 
-## Licencia
+## License
 
-[GPL-3.0-or-later](LICENSE). Componentes de terceros en [THIRD_PARTY.md](THIRD_PARTY.md).
+[GPL-3.0-or-later](LICENSE): you can use, study, modify and share Reflex, as long as you keep the author's credit and any version you distribute stays open source under the same license. Third-party components are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
 
-Reflex es un proyecto independiente: no está afiliado a Apowersoft, Apple, Google ni Genymobile.
+Reflex is an independent project, not affiliated with Apowersoft, Apple, Google or Genymobile.

@@ -25,6 +25,7 @@ fn main() -> eframe::Result<()> {
             .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")).expect("icono válido")),
         // glow: el renderizador que permite ventana transparente en Windows.
         renderer: eframe::Renderer::Glow,
+        centered: true,
         ..Default::default()
     };
     eframe::run_native(

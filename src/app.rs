@@ -77,6 +77,8 @@ pub struct ReflexApp {
     sized_for: (u32, u32),
     tools_hidden: bool,
     mirror_aspect: f32,
+    /// Alto del móvil (vertical) que dejó el usuario; se recuerda entre sesiones.
+    mirror_height: f32,
     opts: Options,
     pair_code: String,
     manual: bool,
@@ -97,7 +99,7 @@ pub struct ReflexApp {
 impl ReflexApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        crate::window::remove_native_border(cc);
+        crate::window::init(cc);
         apply_theme(&cc.egui_ctx);
         let mut app = Self {
             screen: Screen::Home,
@@ -115,6 +117,7 @@ impl ReflexApp {
             sized_for: (0, 0),
             tools_hidden: false,
             mirror_aspect: 9.0 / 20.0,
+            mirror_height: load_mirror_height(),
             opts: Options::default(),
             pair_code: String::new(),
             manual: false,
@@ -844,6 +847,10 @@ impl ReflexApp {
                                 let dh = if (d.x / aspect).abs() > d.y.abs() { d.x / aspect } else { d.y };
                                 let new_h = (phone_h + dh).clamp(TOOLS_MIN_H.min(480.0), 3000.0);
                                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(screen_w(new_h) + GAP + TOOLS_W, new_h)));
+                                self.mirror_height = if aspect <= 1.0 { new_h } else { (screen_w(new_h) / 1.28).max(480.0) };
+                            }
+                            if resp.drag_stopped() {
+                                save_mirror_height(self.mirror_height);
                             }
                             if resp.hovered() {
                                 hint.set(Some((r, t("Arrastra para cambiar el tamaño", "Drag to resize"))));
@@ -900,10 +907,10 @@ impl ReflexApp {
         if video_size.0 > 0 && video_size != self.sized_for && !self.fullscreen {
             self.sized_for = video_size;
             let phone = if aspect <= 1.0 {
-                let h = WINDOW.y;
+                let h = self.mirror_height;
                 vec2((h - 2.0 * BEZEL) * aspect + 2.0 * BEZEL, h)
             } else {
-                let w = 1100.0_f32;
+                let w = self.mirror_height * 1.28;
                 vec2(w, (w - 2.0 * BEZEL) / aspect + 2.0 * BEZEL)
             };
             let size = vec2(phone.x + GAP + TOOLS_W, phone.y.max(TOOLS_MIN_H));
@@ -1047,6 +1054,8 @@ impl ReflexApp {
             let phone = vec2(inner.width() - tools, inner.height()) * factor;
             if phone.y >= 320.0 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(phone.x + tools, phone.y)));
+                self.mirror_height = if aspect <= 1.0 { phone.y } else { (phone.x / 1.28).max(480.0) };
+                save_mirror_height(self.mirror_height);
             }
         }
 
@@ -1077,6 +1086,19 @@ impl ReflexApp {
 }
 
 // ---------------------------------------------------------------- piezas
+
+fn mirror_size_path() -> std::path::PathBuf {
+    paths::data_dir().join("tamano_movil.txt")
+}
+
+fn load_mirror_height() -> f32 {
+    std::fs::read_to_string(mirror_size_path()).ok().and_then(|s| s.trim().parse().ok()).filter(|h: &f32| (320.0..4000.0).contains(h)).unwrap_or(WINDOW.y)
+}
+
+fn save_mirror_height(h: f32) {
+    let _ = std::fs::create_dir_all(paths::data_dir());
+    let _ = std::fs::write(mirror_size_path(), format!("{h:.0}"));
+}
 
 fn apply_theme(ctx: &egui::Context) {
     let mut v = egui::Visuals::light();
@@ -1278,6 +1300,9 @@ fn map_key(key: egui::Key, m: egui::Modifiers) -> Option<(u32, u32)> {
 impl eframe::App for ReflexApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        if !self.fullscreen {
+            crate::window::keep_borderless();
+        }
 
         if self.adb.is_none() && self.setup.lock().unwrap().done {
             self.refresh_adb(&ctx);
