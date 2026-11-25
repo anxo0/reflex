@@ -41,8 +41,10 @@ pub fn reveal() {
     let p = path();
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        // El Explorador quiere la ruta entre comillas justo tras la coma; con `arg` no llega así.
         let mut cmd = std::process::Command::new("explorer.exe");
-        cmd.arg(format!("/select,{}", p.display()));
+        cmd.raw_arg(format!("/select,\"{}\"", p.display()));
         let _ = cmd.spawn();
     }
     #[cfg(target_os = "macos")]

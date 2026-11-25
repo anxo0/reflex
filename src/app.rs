@@ -106,6 +106,8 @@ pub struct ReflexApp {
     devices: Arc<Mutex<Vec<Device>>>,
     poller_started: bool,
     saved_phones: Vec<SavedPhone>,
+    /// Móvil pendiente de quitar de la lista (se pide confirmación).
+    confirm_forget: Option<(String, Option<String>)>,
     mdns: Arc<Mutex<Vec<MdnsService>>>,
     mdns_active: Arc<AtomicBool>,
     wifi: Arc<Mutex<WifiStage>>,
@@ -163,6 +165,7 @@ impl ReflexApp {
             devices: Arc::new(Mutex::new(Vec::new())),
             poller_started: false,
             saved_phones: load_saved_phones(),
+            confirm_forget: None,
             mdns: Arc::new(Mutex::new(Vec::new())),
             mdns_active: Arc::new(AtomicBool::new(false)),
             wifi: Arc::new(Mutex::new(WifiStage::Idle)),
@@ -325,6 +328,48 @@ impl ReflexApp {
             None => self.saved_phones.push(SavedPhone { model, ip }),
         }
         store_saved_phones(&self.saved_phones);
+    }
+
+    /// «¿Quitar este móvil?» antes de borrarlo de la lista.
+    fn forget_dialog(&mut self, ctx: &egui::Context) {
+        let Some((model, serial)) = self.confirm_forget.clone() else { return };
+        let mut choice = None;
+        let frame = egui::Frame::new().fill(raised()).stroke(Stroke::new(1.0, line())).corner_radius(CornerRadius::same(18)).inner_margin(Margin::same(20));
+        let modal = egui::Modal::new(egui::Id::unique("quitar_movil")).frame(frame).backdrop_color(Color32::from_black_alpha(110)).show(ctx, |ui| {
+            ui.set_width(300.0);
+            ui.label(RichText::new(format!("{} {model}?", t("¿Quitar", "Remove"))).size(17.0).strong().color(ink()));
+            ui.add_space(6.0);
+            let help = if serial.is_some() {
+                t("Se desconectará y dejará de salir en la lista. Podrás volver a añadirlo cuando quieras.", "It will disconnect and stop showing in the list. You can add it again any time.")
+            } else {
+                t("Dejará de salir en la lista. Podrás volver a añadirlo cuando quieras.", "It will stop showing in the list. You can add it again any time.")
+            };
+            ui.add(egui::Label::new(RichText::new(help).size(13.0).color(muted())).wrap());
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                let w = (ui.available_width() - 8.0) / 2.0;
+                let cancel = ui.add(egui::Button::new(RichText::new(t("Cancelar", "Cancel")).color(ink())).fill(raised()).stroke(Stroke::new(1.0, line())).corner_radius(CornerRadius::same(10)).min_size(vec2(w, 40.0)));
+                if cancel.clicked() {
+                    choice = Some(false);
+                }
+                let remove = ui.add(egui::Button::new(RichText::new(t("Quitar", "Remove")).strong().color(Color32::WHITE)).fill(pick(Color32::from_rgb(0xB4, 0x23, 0x18), Color32::from_rgb(0xD9, 0x3A, 0x2F))).corner_radius(CornerRadius::same(10)).min_size(vec2(w, 40.0)));
+                hover_overlay(ui, &remove, 10, Color32::from_white_alpha(24));
+                if remove.clicked() {
+                    choice = Some(true);
+                }
+            });
+        });
+        if modal.should_close() && choice.is_none() {
+            choice = Some(false);
+        }
+        match choice {
+            Some(true) => {
+                self.confirm_forget = None;
+                self.forget_phone(&model, serial);
+            }
+            Some(false) => self.confirm_forget = None,
+            None => {}
+        }
     }
 
     fn forget_phone(&mut self, model: &str, serial: Option<String>) {
@@ -692,9 +737,10 @@ impl ReflexApp {
                 ui.add_space(8.0);
             }
         });
-        if let Some((model, serial)) = forget {
-            self.forget_phone(&model, serial);
+        if forget.is_some() {
+            self.confirm_forget = forget;
         }
+        self.forget_dialog(ctx);
         if let Some(p) = reconnect {
             self.reconnect_phone(p);
         }
@@ -1092,10 +1138,15 @@ impl ReflexApp {
         };
         self.header(ui, Some(title));
         ui.add_space(12.0);
+        if self.settings_page == SettingsPage::Root {
+            ui.set_width(ui.available_width() - 8.0);
+            self.settings_root(ui);
+            return;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.set_width(ui.available_width() - 8.0);
             match self.settings_page {
-                SettingsPage::Root => self.settings_root(ui),
+                SettingsPage::Root => {}
                 SettingsPage::Android => self.settings_android(ui),
                 SettingsPage::Iphone => {
                     card(ice_soft(), None).show(ui, |ui| {
@@ -1155,7 +1206,7 @@ impl ReflexApp {
             if nav_row(ui, icon!("smartphone"), "Android", &android_value).clicked() {
                 go = Some(SettingsPage::Android);
             }
-            row_divider(ui);
+            list_divider(ui);
             if nav_row(ui, icon!("tablet"), t("iPhone y iPad", "iPhone and iPad"), t("En desarrollo", "In development")).clicked() {
                 go = Some(SettingsPage::Iphone);
             }
@@ -1176,22 +1227,25 @@ impl ReflexApp {
             if nav_row(ui, icon!("contrast"), t("Apariencia", "Appearance"), theme).clicked() {
                 go = Some(SettingsPage::Appearance);
             }
-            row_divider(ui);
+            list_divider(ui);
             if nav_row(ui, icon!("globe"), t("Idioma", "Language"), lang).clicked() {
                 go = Some(SettingsPage::Language);
             }
         });
-        ui.add_space(16.0);
-        section(ui, t("INFORMACIÓN", "INFORMATION"));
+        // Información, abajo del todo (como un pie). bottom_up: primero lo de más abajo.
         let mut log = false;
-        list_group(ui, |ui| {
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            list_group(ui, |ui| {
             if nav_row(ui, icon!("file-text"), t("Registro", "Log"), "").on_hover_text(t("Abre la carpeta con el archivo del registro, por si algo falla", "Opens the folder with the log file, in case something fails")).clicked() {
                 log = true;
             }
-            row_divider(ui);
+            list_divider(ui);
             if nav_row(ui, icon!("info"), t("Acerca de Reflex", "About Reflex"), env!("CARGO_PKG_VERSION")).clicked() {
                 go = Some(SettingsPage::About);
             }
+            });
+            ui.add_space(4.0);
+            section(ui, t("INFORMACIÓN", "INFORMATION"));
         });
         if log {
             logs::reveal();
@@ -1811,7 +1865,8 @@ fn nav_row(ui: &mut egui::Ui, src: egui::ImageSource<'static>, title: &str, valu
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::click());
     let k = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
     if k > 0.0 {
-        ui.painter().rect_filled(rect, CornerRadius::same(10), ice_soft().gamma_multiply(k));
+        // Radio concéntrico con la tarjeta: 18 de la tarjeta menos 6 de margen.
+        ui.painter().rect_filled(rect, CornerRadius::same(12), ice_soft().gamma_multiply(k));
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let cy = rect.center().y;
@@ -1826,11 +1881,17 @@ fn nav_row(ui: &mut egui::Ui, src: egui::ImageSource<'static>, title: &str, valu
 
 /// Grupo de filas con fondo de tarjeta.
 fn list_group(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    card(raised(), Some(line())).inner_margin(Margin::symmetric(6, 4)).show(ui, |ui| {
+    card(raised(), Some(line())).inner_margin(Margin::same(6)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = 0.0;
         add(ui);
     });
+}
+
+/// Separador entre filas de una lista: empieza donde el texto, no bajo el icono.
+fn list_divider(ui: &mut egui::Ui) {
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline((r.left() + 44.0)..=(r.right() - 12.0), r.center().y, Stroke::new(1.0, line()));
 }
 
 fn card(fill: Color32, stroke: Option<Color32>) -> egui::Frame {
@@ -1851,8 +1912,13 @@ fn icon_button_raw(ui: &mut egui::Ui, src: egui::ImageSource<'static>, tint: Col
     let dark = tint.r() > 0x90 && tint.g() > 0x90;
     let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
     if hover > 0.0 {
-        let base = if dark { DARK_LINE } else { ice_soft() };
-        let fill = if resp.is_pointer_button_down_on() { if dark { Color32::from_rgb(0x33, 0x3B, 0x5C) } else { Color32::from_rgb(0xDC, 0xE6, 0xFF) } } else { base };
+        // Sobre fondos oscuros o azules, un velo blanco: se adapta al color de debajo.
+        let fill = match (dark, resp.is_pointer_button_down_on()) {
+            (true, false) => Color32::from_white_alpha(26),
+            (true, true) => Color32::from_white_alpha(44),
+            (false, false) => ice_soft(),
+            (false, true) => pick(Color32::from_rgb(0xDC, 0xE6, 0xFF), Color32::from_rgb(0x2A, 0x35, 0x60)),
+        };
         ui.painter().rect_filled(rect.shrink(2.0), CornerRadius::same(10), fill.gamma_multiply(hover));
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
