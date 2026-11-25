@@ -10,7 +10,7 @@ Written in Rust. Runs on Windows, Linux and macOS. Available in English and Span
 |---|---|
 | Android (USB and Wi-Fi) | Available |
 | Android, cast from the phone (Miracast or Reflex app) | Planned |
-| iPhone / iPad (AirPlay) | In development, see [docs/IPHONE.md](docs/IPHONE.md) |
+| iPhone / iPad (AirPlay) | Testing: video and audio, see [docs/IPHONE.md](docs/IPHONE.md) |
 
 ## Features (Android)
 
@@ -45,6 +45,13 @@ Written in Rust. Runs on Windows, Linux and macOS. Available in English and Span
 2. Plug in the cable, accept the prompt on the phone and click **Mirror**.
 
 On Xiaomi, Redmi and POCO also enable *USB debugging (Security settings)* or touches will not work.
+
+### iPhone / iPad
+
+1. Connect the iPhone to the same Wi-Fi as your PC and open **iPhone / iPad** on Reflex's home screen: the AirPlay receiver starts (Windows asks for network access the first time).
+2. On the iPhone: *Control Center, Screen Mirroring,* «Reflex».
+
+The iPhone's sound plays on the PC and follows its volume. It can only be watched and heard: Apple does not allow controlling an iPhone from outside. Screenshots, recordings (video only for now) and full screen work as on Android.
 
 ### Controls
 
@@ -90,6 +97,7 @@ Tests: `cargo test` (some use `ffmpeg`, if installed, to generate real H.264 vid
 - `src/video.rs`: H.264 decoding with OpenH264.
 - `src/audio.rs`: audio playback with cpal.
 - `src/recorder.rs`: MP4 recording.
+- `src/iphone/`: AirPlay receiver (mDNS, RTSP, pairing, FairPlay, encrypted video and AAC-ELD audio with its own decoder).
 - `src/app.rs`: user interface. `src/i18n.rs`: languages. `src/window.rs`: borderless window on Windows.
 
 On the phone Reflex uses the [scrcpy](https://github.com/Genymobile/scrcpy) v5.0.1 server, downloaded from its official release and checked against its SHA-256. Everything on the PC side (interface, decoding, control, audio, recording) is Reflex's own code.

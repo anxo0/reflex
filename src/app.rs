@@ -9,6 +9,8 @@ use eframe::egui::{self, Color32, CornerRadius, Margin, RichText, Sense, Stroke,
 use crate::adb::{Adb, Device, MdnsService};
 use crate::android::protocol::{ACTION_DOWN, ACTION_MOVE, ACTION_UP, META_CTRL_ON, POINTER_ID_GENERIC_FINGER};
 use crate::android::{ControlMsg, Options, Session, Status, keycode};
+use crate::android::session::Shared;
+use crate::iphone::{self, Receiver};
 use crate::logs::{self, log};
 use crate::recorder::Recorder;
 use crate::i18n::{self, Lang, t};
@@ -84,6 +86,7 @@ enum Screen {
     Wifi,
     Usb,
     Cast,
+    Iphone,
     Settings,
 }
 
@@ -121,6 +124,11 @@ pub struct ReflexApp {
     feature_installing: Arc<AtomicBool>,
     retry_cast_after_install: bool,
     cast_retry_at: Option<Instant>,
+    /// Receptor AirPlay (iPhone y iPad) mientras su pantalla está abierta o duplicando.
+    airplay: Option<Receiver>,
+    /// La ventana está en modo móvil porque el iPhone está duplicando. Comparte con
+    /// «Enviar pantalla» la vista de solo ver (`cast_texture`, `cast_seq`).
+    ios_live: bool,
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
     sized_for: (u32, u32),
@@ -178,6 +186,8 @@ impl ReflexApp {
             feature_installing: Arc::new(AtomicBool::new(false)),
             retry_cast_after_install: false,
             cast_retry_at: None,
+            airplay: None,
+            ios_live: false,
             texture: None,
             last_seq: 0,
             sized_for: (0, 0),
@@ -449,10 +459,47 @@ impl ReflexApp {
     /// Un móvil ha empezado a enviar: la ventana pasa a ser el móvil.
     fn enter_cast_window(&mut self, ctx: &egui::Context) {
         self.cast_live = true;
+        self.enter_view_window(ctx, 9.0 / 20.0);
+    }
+
+    fn leave_cast_window(&mut self, ctx: &egui::Context) {
+        self.cast_live = false;
+        self.leave_view_window(ctx);
+    }
+
+    /// El iPhone ha empezado a duplicar: la ventana pasa a ser el iPhone.
+    fn enter_ios_window(&mut self, ctx: &egui::Context) {
+        self.ios_live = true;
+        self.enter_view_window(ctx, load_aspect("iphone").unwrap_or(9.0 / 19.5));
+    }
+
+    fn leave_ios_window(&mut self, ctx: &egui::Context) {
+        self.ios_live = false;
+        self.leave_view_window(ctx);
+    }
+
+    fn start_airplay(&mut self, ctx: &egui::Context) {
+        if self.airplay.is_none() {
+            self.airplay = Some(Receiver::start("Reflex".into(), ctx.clone()));
+        }
+    }
+
+    /// Deja de recibir del iPhone y vuelve al inicio.
+    fn stop_airplay(&mut self, ctx: &egui::Context) {
+        if self.ios_live {
+            self.leave_ios_window(ctx);
+        }
+        if let Some(r) = self.airplay.take() {
+            r.stop();
+        }
+        self.screen = Screen::Home;
+    }
+
+    /// La ventana de solo ver (Miracast o iPhone) se abre con la forma del móvil.
+    fn enter_view_window(&mut self, ctx: &egui::Context, aspect: f32) {
         self.cast_texture = None;
         self.cast_seq = 0;
         self.sized_for = (0, 0);
-        let aspect = 9.0 / 20.0;
         self.mirror_height = self.mirror_height.min(max_phone_height(ctx));
         self.expected_aspect = aspect;
         self.mirror_aspect = aspect;
@@ -466,8 +513,7 @@ impl ReflexApp {
         }
     }
 
-    fn leave_cast_window(&mut self, ctx: &egui::Context) {
-        self.cast_live = false;
+    fn leave_view_window(&mut self, ctx: &egui::Context) {
         self.cast_texture = None;
         if self.fullscreen {
             self.fullscreen = false;
@@ -522,10 +568,19 @@ impl ReflexApp {
         });
     }
 
+    /// Estado compartido de lo que se ve y se puede capturar: el Android o el iPhone.
+    fn active_shared(&self) -> Option<Arc<Shared>> {
+        match (&self.session, &self.airplay) {
+            (Some(s), _) => Some(s.shared.clone()),
+            (None, Some(r)) if self.ios_live => Some(r.shared.clone()),
+            _ => None,
+        }
+    }
+
     fn screenshot(&mut self) {
-        let Some(s) = &self.session else { return };
+        let Some(shared) = self.active_shared() else { return };
         let (rgba, w, h) = {
-            let f = s.shared.frame.lock().unwrap();
+            let f = shared.frame.lock().unwrap();
             let rgba: Vec<u8> = f.image.as_ref().map(|i| i.pixels.iter().flat_map(|p| p.to_array()).collect()).unwrap_or_default();
             (rgba, f.width as u32, f.height as u32)
         };
@@ -544,18 +599,26 @@ impl ReflexApp {
     }
 
     fn is_recording(&self) -> bool {
-        self.session.as_ref().is_some_and(|s| s.shared.recorder.lock().unwrap().is_some())
+        self.active_shared().is_some_and(|s| s.recorder.lock().unwrap().is_some())
     }
 
     fn toggle_recording(&mut self) {
-        let Some(s) = &self.session else { return };
+        let Some(shared) = self.active_shared() else { return };
         if self.is_recording() {
-            crate::android::session::finish_recording(&s.shared);
+            crate::android::session::finish_recording(&shared);
         } else {
             let path = paths::recordings_dir().join(format!("grabacion_{}.mp4", paths::timestamp()));
-            *s.shared.recorder.lock().unwrap() = Some(Recorder::new(path));
-            s.send(ControlMsg::ResetVideo);
-            self.toast("Grabando. Pulsa otra vez para parar");
+            *shared.recorder.lock().unwrap() = Some(Recorder::new(path));
+            if let Some(s) = &self.session {
+                s.send(ControlMsg::ResetVideo);
+                self.toast("Grabando. Pulsa otra vez para parar");
+            } else {
+                // AirPlay no deja pedir un fotograma clave: se empieza con el siguiente.
+                self.toast(t(
+                    "Grabación preparada: empieza con el siguiente fotograma clave del iPhone (sin sonido)",
+                    "Recording armed: it starts with the iPhone's next key frame (no sound)",
+                ));
+            }
         }
     }
 
@@ -774,6 +837,11 @@ impl ReflexApp {
         if option_card(ui, icon!("cast"), t("Desde el móvil", "From the phone"), t("Envía la pantalla desde el móvil. Solo ver", "Cast the screen from the phone. View only")).clicked() {
             self.screen = Screen::Cast;
             self.start_cast(ctx);
+        }
+        ui.add_space(8.0);
+        if option_card(ui, icon!("tablet"), "iPhone / iPad", t("Por AirPlay, con imagen y sonido. Solo ver", "Over AirPlay, with picture and sound. View only")).clicked() {
+            self.screen = Screen::Iphone;
+            self.start_airplay(ctx);
         }
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
@@ -1069,17 +1137,80 @@ impl ReflexApp {
         }
     }
 
-    /// Ventana de solo ver para «Enviar pantalla»: el móvil y la columna de controles.
-    fn cast_mirror_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let Some(shared) = self.cast.as_ref().map(|c| c.shared.clone()) else { return };
-        let image = {
-            let f = shared.frame.lock().unwrap();
-            if f.seq != self.cast_seq {
-                self.cast_seq = f.seq;
-                f.image.clone()
-            } else {
-                None
+    fn iphone_view(&mut self, ui: &mut egui::Ui) {
+        self.header(ui, Some("iPhone / iPad"));
+        ui.add_space(16.0);
+        let state = self.airplay.as_ref().map(Receiver::state).unwrap_or(iphone::State::Starting);
+        let mut retry = false;
+        match &state {
+            iphone::State::Failed(e) => {
+                ui.label(RichText::new(t("No se puede recibir ahora", "Cannot receive right now")).size(24.0).strong().color(ink()));
+                ui.add_space(8.0);
+                ui.label(RichText::new(e).color(err_col()));
+                ui.add_space(14.0);
+                if primary_button(ui, t("Reintentar", "Try again"), None).clicked() {
+                    retry = true;
+                }
             }
+            _ => {
+                let name = self.airplay.as_ref().map_or_else(|| "Reflex".to_string(), |r| r.name.clone());
+                ui.label(RichText::new(t("Duplica tu iPhone o iPad", "Mirror your iPhone or iPad")).size(24.0).strong().color(ink()));
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(t(
+                        "Por AirPlay, sin instalar nada. Verás y oirás el iPhone en el PC, pero Apple no deja manejarlo desde fuera.",
+                        "Over AirPlay, nothing to install. You will see and hear the iPhone on the PC, but Apple does not allow controlling it from outside.",
+                    ))
+                    .color(muted()),
+                );
+                ui.add_space(16.0);
+                numbered(ui, 1, t("Conecta el iPhone a la misma Wi-Fi que este PC.", "Connect the iPhone to the same Wi-Fi as this PC."));
+                numbered(ui, 2, t("Abre el Centro de control: desliza desde la esquina superior derecha.", "Open Control Center: swipe down from the top-right corner."));
+                numbered(ui, 3, &format!("{} «{name}».", t("Pulsa «Duplicar pantalla» y elige", "Tap “Screen Mirroring” and pick")));
+                ui.add_space(12.0);
+                card(raised(), Some(line())).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(18.0).color(BLUE_BRIGHT));
+                        ui.vertical(|ui| {
+                            let msg = if matches!(state, iphone::State::Starting) { t("Preparando…", "Getting ready…") } else { t("Esperando a tu iPhone…", "Waiting for your iPhone…") };
+                            ui.label(RichText::new(msg).strong().color(ink()));
+                            ui.label(RichText::new(format!("{} {name}", t("Este PC aparece como", "This PC shows up as"))).size(12.0).color(muted()));
+                        });
+                    });
+                });
+                ui.add_space(12.0);
+                card(ice_soft(), None).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new(t(
+                            "Si «Reflex» no aparece, revisa que Windows le dejó usar la red (redes privadas) y que la Wi-Fi no aísla a los dispositivos.",
+                            "If “Reflex” does not show up, check that Windows allowed it on the network (private networks) and that the Wi-Fi does not isolate devices.",
+                        ))
+                        .size(12.0)
+                        .color(accent()),
+                    );
+                });
+            }
+        }
+        if retry {
+            if let Some(r) = self.airplay.take() {
+                r.stop();
+            }
+            self.start_airplay(ui.ctx());
+        }
+    }
+
+    /// Ventana de solo ver para «Enviar pantalla» y el iPhone: el móvil y la columna de controles.
+    fn cast_mirror_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Miracast e iPhone guardan el fotograma igual; el iPhone además quiere saber cuál
+        // se ha pintado, para no convertir los que no llegarían a verse.
+        let (image, dark) = if self.ios_live {
+            let Some(shared) = self.airplay.as_ref().map(|r| r.shared.clone()) else { return };
+            (take_new_frame(&shared.frame, &mut self.cast_seq, Some(&shared.shown_seq)), shared.screen_dark.load(Ordering::Relaxed))
+        } else {
+            let Some(shared) = self.cast.as_ref().map(|c| c.shared.clone()) else { return };
+            (take_new_frame(&shared.frame, &mut self.cast_seq, None), shared.screen_dark.load(Ordering::Relaxed))
         };
         if let Some(img) = image {
             let img = egui::ImageData::from(img);
@@ -1098,6 +1229,9 @@ impl ReflexApp {
             if (aspect - self.expected_aspect).abs() > 0.01 {
                 crate::window::resize(ctx, mirror_window_size(self.mirror_height, aspect));
                 self.expected_aspect = aspect;
+            }
+            if self.ios_live {
+                save_aspect("iphone", aspect);
             }
         }
         if self.fullscreen {
@@ -1128,7 +1262,7 @@ impl ReflexApp {
         match &self.cast_texture {
             Some(tex) => {
                 egui::Image::from_texture((tex.id(), tex.size_vec2())).corner_radius(inner_radius).paint_at(ui, screen);
-                if shared.screen_dark.load(Ordering::Relaxed) {
+                if dark {
                     ui.painter().rect_filled(screen, inner_radius, Color32::from_rgb(0x05, 0x07, 0x10));
                     let logo = (screen.width() * 0.22).clamp(48.0, 96.0);
                     let c = screen.center();
@@ -1202,11 +1336,26 @@ impl ReflexApp {
                 SettingsPage::Root => {}
                 SettingsPage::Android => self.settings_android(ui),
                 SettingsPage::Iphone => {
+                    section(ui, t("CALIDAD", "QUALITY"));
+                    ui.label(
+                        RichText::new(t(
+                            "Siempre la máxima que se ve con fluidez: el iPhone envía su pantalla a 2160 píxeles de alto.",
+                            "Always the highest that plays smoothly: the iPhone sends its screen 2160 pixels tall.",
+                        ))
+                        .size(13.0)
+                        .color(ink()),
+                    );
+                    ui.add_space(16.0);
                     card(ice_soft(), None).show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.label(RichText::new(t("En desarrollo", "In development")).strong().color(accent()));
-                        ui.add_space(4.0);
-                        ui.label(RichText::new(t("El iPhone y el iPad enviarán su pantalla con «Duplicar pantalla» (AirPlay), sin instalar nada. Solo ver: Apple no deja controlarlos desde el PC.", "iPhone and iPad will send their screen with “Screen Mirroring” (AirPlay), nothing to install. View only: Apple does not allow controlling them from a PC.")).size(13.0).color(ink()));
+                        ui.label(
+                            RichText::new(t(
+                                "Abre «iPhone / iPad» en el inicio y, en el iPhone, «Duplicar pantalla». Se ve y se oye, pero Apple no deja controlarlo desde el PC.",
+                                "Open “iPhone / iPad” on the home screen and, on the iPhone, “Screen Mirroring”. You see and hear it, but Apple does not allow controlling it from a PC.",
+                            ))
+                            .size(13.0)
+                            .color(accent()),
+                        );
                     });
                 }
                 SettingsPage::Appearance => {
@@ -1260,7 +1409,7 @@ impl ReflexApp {
                 go = Some(SettingsPage::Android);
             }
             list_divider(ui);
-            if nav_row(ui, icon!("tablet"), t("iPhone y iPad", "iPhone and iPad"), t("En desarrollo", "In development")).clicked() {
+            if nav_row(ui, icon!("tablet"), t("iPhone y iPad", "iPhone and iPad"), t("Máxima", "Maximum")).clicked() {
                 go = Some(SettingsPage::Iphone);
             }
         });
@@ -1348,8 +1497,9 @@ impl ReflexApp {
 
     /// Columna de controles flotante, separada del móvil. Se puede esconder.
     fn mirror_tools(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, rect: egui::Rect) {
-        // Con «Enviar pantalla» solo se ve: no hay botones para manejar el móvil.
+        // Con «Enviar pantalla» y el iPhone solo se ve: no hay botones para manejar el móvil.
         let android = self.session.is_some();
+        let ios = !android && self.ios_live;
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("pistas")));
         let hint: std::cell::Cell<Option<(egui::Rect, &'static str)>> = std::cell::Cell::new(None);
 
@@ -1434,6 +1584,8 @@ impl ReflexApp {
                                 if tool(ui, icon!("power"), DARK_TEXT, t("Bloquear o desbloquear el móvil", "Lock or wake the phone")) {
                                     self.press(keycode::POWER);
                                 }
+                            }
+                            if android || ios {
                                 divider(ui);
                                 if tool(ui, icon!("camera"), DARK_TEXT, t("Hacer captura", "Take a screenshot")) {
                                     self.screenshot();
@@ -1454,6 +1606,8 @@ impl ReflexApp {
                             if tool(ui, icon!("close"), DARK_TEXT, t("Desconectar", "Disconnect")) {
                                 if android {
                                     self.stop_session(ctx);
+                                } else if ios {
+                                    self.stop_airplay(ctx);
                                 } else {
                                     self.stop_cast(ctx);
                                 }
@@ -1751,6 +1905,23 @@ struct SavedPhone {
 /// Una línea por móvil: modelo, tabulador e IP.
 const SEP: char = '\u{9}';
 const NL: char = '\u{a}';
+
+/// Devuelve el fotograma si es nuevo (y apunta en `shown` que se va a pintar).
+fn take_new_frame(
+    frame: &Mutex<crate::android::session::FrameSlot>,
+    seq: &mut u64,
+    shown: Option<&std::sync::atomic::AtomicU64>,
+) -> Option<Arc<egui::ColorImage>> {
+    let f = frame.lock().unwrap();
+    if f.seq == *seq {
+        return None;
+    }
+    *seq = f.seq;
+    if let Some(shown) = shown {
+        shown.store(f.seq, Ordering::Relaxed);
+    }
+    f.image.clone()
+}
 
 fn saved_phones_path() -> std::path::PathBuf {
     paths::data_dir().join("moviles.txt")
@@ -2209,9 +2380,25 @@ impl eframe::App for ReflexApp {
             }
         }
 
-        let title = match &self.session {
+        // iPhone: igual que «Enviar pantalla». Mientras duplica, la ventana es el iPhone.
+        if let Some(r) = &self.airplay {
+            for n in r.shared.notices.lock().unwrap().drain(..) {
+                self.notice = Some((n, Instant::now()));
+            }
+        }
+        let ios_mirroring = matches!(self.airplay.as_ref().map(Receiver::state), Some(iphone::State::Mirroring(_)));
+        if ios_mirroring && !self.ios_live && self.session.is_none() && !self.cast_live {
+            self.enter_ios_window(&ctx);
+        } else if self.ios_live && !ios_mirroring {
+            self.leave_ios_window(&ctx);
+        }
+        if !self.ios_live && self.screen != Screen::Iphone && let Some(r) = self.airplay.take() {
+            r.stop();
+        }
+
+        let title = match self.active_shared() {
             Some(s) => {
-                let n = s.shared.device_name.lock().unwrap().clone();
+                let n = s.device_name.lock().unwrap().clone();
                 if n.is_empty() { "Reflex".to_string() } else { format!("{n} - Reflex") }
             }
             None => "Reflex".to_string(),
@@ -2223,7 +2410,7 @@ impl eframe::App for ReflexApp {
 
         if self.session.is_some() {
             egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(Color32::TRANSPARENT)).show(ui, |ui| self.mirror_view(ui, &ctx));
-        } else if self.cast_live {
+        } else if self.cast_live || self.ios_live {
             egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(Color32::TRANSPARENT)).show(ui, |ui| self.cast_mirror_view(ui, &ctx));
         } else {
             let notice = self.notice.clone().filter(|(_, at)| at.elapsed() < Duration::from_secs(6));
@@ -2243,6 +2430,7 @@ impl eframe::App for ReflexApp {
                         Screen::Wifi => self.wifi_view(ui, &ctx),
                         Screen::Usb => self.usb_view(ui, &ctx),
                         Screen::Cast => self.cast_view(ui),
+                        Screen::Iphone => self.iphone_view(ui),
                         Screen::Settings => self.settings_view(ui),
                     }
                 }
@@ -2280,6 +2468,13 @@ impl eframe::App for ReflexApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(r) = self.airplay.take() {
+            if self.ios_live && let Some(p) = self.mirror_pos {
+                write_mirror_pref("pos_x", format!("{:.0}", p.x));
+                write_mirror_pref("pos_y", format!("{:.0}", p.y));
+            }
+            r.stop();
+        }
         if let Some(c) = self.cast.take() {
             if self.cast_live && let Some(p) = self.mirror_pos {
                 write_mirror_pref("pos_x", format!("{:.0}", p.x));
