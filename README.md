@@ -100,6 +100,8 @@ Icon, colours, typography and voice are in the [brand manual](docs/marca/README.
 
 ## License
 
+Copyright (C) 2026 anxo0.
+
 [GPL-3.0-or-later](LICENSE): you can use, study, modify and share Reflex, as long as you keep the author's credit and any version you distribute stays open source under the same license. Third-party components are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 Reflex is an independent project, not affiliated with Apowersoft, Apple, Google or Genymobile.

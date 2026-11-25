@@ -1193,7 +1193,7 @@ impl ReflexApp {
                         ui.add(egui::Image::new(egui::include_image!("../assets/icon-128.png")).fit_to_exact_size(vec2(72.0, 72.0)));
                         ui.add_space(8.0);
                         ui.label(RichText::new("Reflex").size(22.0).strong().color(ink()));
-                        ui.label(RichText::new(format!("{} {}", t("Versión", "Version"), env!("CARGO_PKG_VERSION"))).size(12.0).color(muted()));
+                        ui.label(RichText::new(format!("{} {} · {} anxo0", t("Versión", "Version"), env!("CARGO_PKG_VERSION"), t("por", "by"))).size(12.0).color(muted()));
                         ui.add_space(12.0);
                         ui.label(RichText::new(t("Libre, open source y sin límite de tiempo. Licencia GPL-3.0: puedes usarlo, estudiarlo, cambiarlo y compartirlo.", "Free, open source, no time limits. GPL-3.0 license: you can use, study, change and share it.")).size(13.0).color(muted()));
                         ui.add_space(8.0);
