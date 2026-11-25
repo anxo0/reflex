@@ -30,6 +30,17 @@ pub fn data_dir() -> PathBuf {
         .join("Reflex")
 }
 
+/// Las primeras versiones se llamaban "Reflejo": reutiliza lo ya descargado.
+pub fn migrate_legacy_data() {
+    let Some(base) = dirs::data_local_dir() else { return };
+    let old = base.join("Reflejo");
+    let new = data_dir();
+    if old.is_dir() && !new.exists()
+        && let Err(e) = std::fs::rename(&old, &new) {
+            crate::logs::log(format!("No se pudo mover {} a {}: {e}", old.display(), new.display()));
+        }
+}
+
 pub fn components_dir() -> PathBuf {
     data_dir().join("components")
 }

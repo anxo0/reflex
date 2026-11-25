@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2447E0"/>
+      <stop offset="1" stop-color="#001489"/>
+    </linearGradient>
+    <!-- El reflejo se desvanece hacia la derecha, como en un cristal -->
+    <linearGradient id="reflection" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A9BFFF"/>
+      <stop offset="1" stop-color="#A9BFFF" stop-opacity="0.18"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#tile)"/>
+  <rect x="452" y="196" width="310" height="632" rx="76" fill="url(#reflection)"/>
+  <rect x="262" y="196" width="310" height="632" rx="76" fill="#FFFFFF"/>
+  <rect x="372" y="244" width="90" height="24" rx="12" fill="#001489"/>
+</svg>
