@@ -230,3 +230,47 @@ mod ffmpeg_tests {
         check("high");
     }
 }
+
+#[cfg(test)]
+mod bench {
+    use super::nal_units;
+    use openh264::decoder::Decoder;
+    use openh264::formats::YUVSource;
+    use std::process::Command;
+    use std::time::Instant;
+
+    /// `cargo test --release bench_decode -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_decode() {
+        let out = Command::new("ffmpeg")
+            .args(["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=864x1920:rate=60", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+            .args(["-profile:v", "high", "-bf", "0", "-g", "60", "-b:v", "8M", "-x264-params", "aud=1", "-f", "h264", "-"])
+            .output()
+            .unwrap();
+        let mut aus: Vec<Vec<u8>> = Vec::new();
+        for nal in nal_units(&out.stdout) {
+            if nal[0] & 0x1f == 9 || aus.is_empty() {
+                aus.push(Vec::new());
+            }
+            let au = aus.last_mut().unwrap();
+            au.extend_from_slice(&[0, 0, 0, 1]);
+            au.extend_from_slice(nal);
+        }
+        let mut dec = Decoder::new().unwrap();
+        let mut rgba = vec![0u8; 864 * 1920 * 4];
+        let (mut td, mut tc, mut n) = (0.0, 0.0, 0);
+        for au in &aus {
+            let t0 = Instant::now();
+            let yuv = dec.decode(au).unwrap();
+            let t1 = Instant::now();
+            if let Some(y) = yuv {
+                y.write_rgba8(&mut rgba);
+                n += 1;
+            }
+            td += (t1 - t0).as_secs_f64();
+            tc += t1.elapsed().as_secs_f64();
+        }
+        println!("{n} fotogramas: decodificar {:.2} ms, convertir a RGBA {:.2} ms por fotograma", td * 1000.0 / n as f64, tc * 1000.0 / n as f64);
+    }
+}

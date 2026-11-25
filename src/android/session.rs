@@ -25,6 +25,8 @@ pub struct Options {
     pub bit_rate_mbps: u32,
     pub max_fps: u32,
     pub audio: bool,
+    /// Que el sonido siga saliendo también por el móvil (Android 13+).
+    pub audio_dup: bool,
     pub stay_awake: bool,
     pub show_touches: bool,
     pub screen_off: bool,
@@ -32,7 +34,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { max_size: 1920, bit_rate_mbps: 8, max_fps: 60, audio: true, stay_awake: true, show_touches: false, screen_off: false }
+        Self { max_size: 1920, bit_rate_mbps: 8, max_fps: 60, audio: true, audio_dup: false, stay_awake: true, show_touches: false, screen_off: false }
     }
 }
 
@@ -46,7 +48,8 @@ pub enum Status {
 
 #[derive(Default)]
 pub struct FrameSlot {
-    pub rgba: Vec<u8>,
+    /// Último fotograma decodificado. Se comparte con la interfaz sin copiarlo.
+    pub image: Option<Arc<egui::ColorImage>>,
     pub width: usize,
     pub height: usize,
     pub seq: u64,
@@ -62,6 +65,8 @@ pub struct Shared {
     pub recorder: Mutex<Option<Recorder>>,
     pub notices: Mutex<Vec<String>>,
     pub fps: Mutex<f32>,
+    /// La imagen es negra: el móvil tiene la pantalla apagada.
+    pub screen_dark: AtomicBool,
     pub stop: AtomicBool,
     sockets: Mutex<Vec<TcpStream>>,
 }
@@ -98,6 +103,7 @@ impl Shared {
             recorder: Mutex::new(None),
             notices: Mutex::new(Vec::new()),
             fps: Mutex::new(0.0),
+            screen_dark: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             sockets: Mutex::new(Vec::new()),
         }
@@ -201,6 +207,9 @@ fn server_args(scid: u32, opts: &Options) -> Vec<String> {
     if opts.audio {
         // PCM sin comprimir: no hace falta decodificador de audio.
         a.push("audio_codec=raw".into());
+        if opts.audio_dup {
+            a.push("audio_dup=true".into());
+        }
     } else {
         a.push("audio=false".into());
     }

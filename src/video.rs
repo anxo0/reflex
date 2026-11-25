@@ -32,6 +32,8 @@ pub fn run(mut s: TcpStream, shared: &Arc<Shared>, ctx: &egui::Context) -> Resul
     let mut frames = 0u32;
     let mut fps_since = Instant::now();
     let mut errors = 0u32;
+    let mut bytes = 0usize;
+    let mut log_at = Instant::now();
 
     loop {
         s.read_exact(&mut header)?;
@@ -57,6 +59,7 @@ pub fn run(mut s: TcpStream, shared: &Arc<Shared>, ctx: &egui::Context) -> Resul
             StreamHeader::Packet { pts, config: is_config, key_frame, size } => {
                 packet.resize(size as usize, 0);
                 s.read_exact(&mut packet)?;
+                bytes += packet.len();
 
                 if is_config {
                     // SPS/PPS: se pegan delante del siguiente fotograma (como hace scrcpy),
@@ -83,9 +86,15 @@ pub fn run(mut s: TcpStream, shared: &Arc<Shared>, ctx: &egui::Context) -> Resul
                 match decoder.decode(&packet) {
                     Ok(Some(yuv)) => {
                         let (w, h) = yuv.dimensions();
+                        let mut pixels = vec![egui::Color32::TRANSPARENT; w * h];
+                        // SAFETY: Color32 es #[repr(C)] con 4 u8 (RGBA), así que el búfer mide w*h*4 bytes.
+                        let bytes = unsafe { std::slice::from_raw_parts_mut(pixels.as_mut_ptr() as *mut u8, pixels.len() * 4) };
+                        yuv.write_rgba8(bytes);
+                        // Muestra 1 de cada 97 píxeles: si todo es casi negro, la pantalla está apagada.
+                        let dark = pixels.iter().step_by(97).all(|p| p.r() < 10 && p.g() < 10 && p.b() < 10);
+                        shared.screen_dark.store(dark, std::sync::atomic::Ordering::Relaxed);
                         let mut f = shared.frame.lock().unwrap();
-                        f.rgba.resize(w * h * 4, 0);
-                        yuv.write_rgba8(&mut f.rgba);
+                        f.image = Some(Arc::new(egui::ColorImage::new([w, h], pixels)));
                         f.width = w;
                         f.height = h;
                         f.seq += 1;
@@ -106,6 +115,11 @@ pub fn run(mut s: TcpStream, shared: &Arc<Shared>, ctx: &egui::Context) -> Resul
                 let elapsed = fps_since.elapsed().as_secs_f32();
                 if elapsed >= 1.0 {
                     *shared.fps.lock().unwrap() = frames as f32 / elapsed;
+                    if log_at.elapsed().as_secs() >= 5 {
+                        log(format!("Vídeo: {:.0} fps, {:.1} Mb/s", frames as f32 / elapsed, bytes as f32 * 8.0 / 1e6 / elapsed));
+                        log_at = Instant::now();
+                    }
+                    bytes = 0;
                     frames = 0;
                     fps_since = Instant::now();
                 }
@@ -185,6 +199,6 @@ mod tests {
         let f = shared.frame.lock().unwrap();
         assert_eq!((f.width, f.height), (480, 270));
         assert!(f.seq as usize >= n - 1, "fotogramas decodificados: {} de {n}", f.seq);
-        assert_eq!(f.rgba.len(), 480 * 270 * 4);
+        assert_eq!(f.image.as_ref().map(|i| i.pixels.len()), Some(480 * 270));
     }
 }

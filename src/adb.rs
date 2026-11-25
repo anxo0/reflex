@@ -145,9 +145,11 @@ impl Adb {
         }
     }
 
-    pub fn disconnect(&self, addr: &str) -> Result<()> {
-        self.run(&["disconnect", addr]).map(|_| ())
+    /// Móviles anunciados en la red por la depuración inalámbrica (Android 11+).
+    pub fn mdns_services(&self) -> Result<Vec<MdnsService>> {
+        Ok(parse_mdns(&self.run(&["mdns", "services"])?))
     }
+
 
     /// Pasa un móvil conectado por USB a modo inalámbrico y se conecta a él.
     pub fn switch_to_wifi(&self, serial: &str) -> Result<String> {
@@ -167,6 +169,36 @@ impl Adb {
         }
         Err(last.unwrap_or_else(|| anyhow::anyhow!("no se pudo conectar a {addr}")))
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MdnsService {
+    pub name: String,
+    /// `_adb-tls-pairing._tcp` (vinculando) o `_adb-tls-connect._tcp` (listo para conectar).
+    pub kind: String,
+    pub addr: String,
+}
+
+impl MdnsService {
+    pub fn is_pairing(&self) -> bool {
+        self.kind.starts_with("_adb-tls-pairing")
+    }
+    pub fn is_connect(&self) -> bool {
+        self.kind.starts_with("_adb-tls-connect")
+    }
+    pub fn ip(&self) -> &str {
+        self.addr.rsplit_once(':').map(|(ip, _)| ip).unwrap_or(&self.addr)
+    }
+}
+
+pub fn parse_mdns(out: &str) -> Vec<MdnsService> {
+    out.lines()
+        .filter_map(|l| {
+            let mut p = l.split_whitespace();
+            let (name, kind, addr) = (p.next()?, p.next()?, p.next()?);
+            (kind.starts_with("_adb") && addr.contains(':')).then(|| MdnsService { name: name.into(), kind: kind.trim_end_matches('.').into(), addr: addr.into() })
+        })
+        .collect()
 }
 
 fn parse_inet(out: &str) -> Option<String> {
@@ -213,6 +245,18 @@ mod tests {
         assert!(d[1].is_wireless());
         assert_eq!(d[2].state, "unauthorized");
         assert_eq!(d[2].label(), "ZY22");
+    }
+
+    #[test]
+    fn parses_mdns() {
+        let out = "List of discovered mdns services\n\
+                   adb-R58M123-AbCdEf\t_adb-tls-connect._tcp\t192.168.18.64:41555\n\
+                   adb-R58M123-AbCdEf\t_adb-tls-pairing._tcp.\t192.168.18.64:37123\n";
+        let s = parse_mdns(out);
+        assert_eq!(s.len(), 2);
+        assert!(s[0].is_connect() && s[1].is_pairing());
+        assert_eq!(s[1].addr, "192.168.18.64:37123");
+        assert_eq!(s[1].ip(), "192.168.18.64");
     }
 
     #[test]
