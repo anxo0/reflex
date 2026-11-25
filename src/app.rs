@@ -120,6 +120,7 @@ pub struct ReflexApp {
     cast_live: bool,
     feature_installing: Arc<AtomicBool>,
     retry_cast_after_install: bool,
+    cast_retry_at: Option<Instant>,
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
     sized_for: (u32, u32),
@@ -176,6 +177,7 @@ impl ReflexApp {
             cast_live: false,
             feature_installing: Arc::new(AtomicBool::new(false)),
             retry_cast_after_install: false,
+            cast_retry_at: None,
             texture: None,
             last_seq: 0,
             sized_for: (0, 0),
@@ -994,6 +996,31 @@ impl ReflexApp {
                 }
                 ui.ctx().request_repaint_after(Duration::from_millis(500));
             }
+            crate::miracast::CastStatus::WifiOff => {
+                ui.label(RichText::new(t("Enciende el Wi-Fi del PC", "Turn on the PC's Wi-Fi")).size(24.0).strong().color(ink()));
+                ui.add_space(8.0);
+                ui.label(RichText::new(t("«Enviar pantalla» llega al PC por su Wi-Fi, aunque tengas internet por cable. No hace falta conectarlo a ninguna red: solo que esté encendido.", "Screen cast reaches the PC through its Wi-Fi, even if your internet comes through a cable. It does not need to join a network: it only has to be on.")).color(muted()));
+                ui.add_space(14.0);
+                if primary_button(ui, t("Abrir ajustes de Wi-Fi", "Open Wi-Fi settings"), None).clicked() {
+                    crate::miracast::open_wifi_settings();
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new().size(14.0).color(BLUE_BRIGHT));
+                    ui.label(RichText::new(t("En cuanto lo enciendas, seguimos solos.", "As soon as you turn it on, we carry on.")).size(12.0).color(muted()));
+                });
+                // Vuelve a mirar cada pocos segundos.
+                if self.cast_retry_at.is_none_or(|at| at.elapsed() > Duration::from_secs(3)) {
+                    self.cast_retry_at = Some(Instant::now());
+                    retry = true;
+                }
+                ui.ctx().request_repaint_after(Duration::from_millis(500));
+            }
+            crate::miracast::CastStatus::NoWifi => {
+                ui.label(RichText::new(t("Este PC no tiene Wi-Fi", "This PC has no Wi-Fi")).size(24.0).strong().color(ink()));
+                ui.add_space(8.0);
+                ui.label(RichText::new(t("«Enviar pantalla» necesita una tarjeta Wi-Fi en el PC, y este no tiene. Puedes duplicar el móvil con «Sin cable» o «Con cable», o con la app Reflex para Android cuando salga.", "Screen cast needs a Wi-Fi card in the PC, and this one has none. You can mirror the phone with Wireless or With cable, or with the Reflex Android app when it is out.")).color(muted()));
+            }
             crate::miracast::CastStatus::Failed(e) => {
                 ui.label(RichText::new(t("No se puede recibir ahora", "Cannot receive right now")).size(24.0).strong().color(ink()));
                 ui.add_space(8.0);
@@ -1012,7 +1039,7 @@ impl ReflexApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new(t("Sin cables ni ajustes de desarrollador. Verás y oirás el móvil, pero no podrás manejarlo desde el PC.", "No cables or developer settings. You will see and hear the phone, but cannot control it from the PC.")).color(muted()));
                 ui.add_space(16.0);
-                numbered(ui, 1, t("Conecta el móvil a la misma Wi-Fi que este PC.", "Connect the phone to the same Wi-Fi as this PC."));
+                numbered(ui, 1, t("Conecta el móvil a la misma Wi-Fi que este PC. El Wi-Fi del PC tiene que estar encendido, aunque uses cable.", "Connect the phone to the same Wi-Fi as this PC. The PC's Wi-Fi must be on, even if you use a cable."));
                 numbered(ui, 2, t("Desliza para abrir los ajustes rápidos y pulsa «Enviar pantalla» (o «Smart View», «Duplicar pantalla», «Transmitir»).", "Swipe down for quick settings and tap “Screen cast” (or “Smart View”, “Screen mirroring”, “Cast”)."));
                 numbered(ui, 3, &format!("{} «{name}».", t("Elige", "Pick")));
                 ui.add_space(12.0);

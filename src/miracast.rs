@@ -23,6 +23,10 @@ pub enum CastStatus {
     Connected(String),
     /// Falta la función opcional «Pantalla inalámbrica» de Windows.
     NeedsFeature,
+    /// El PC tiene Wi-Fi pero está apagado: Miracast lo necesita aunque internet vaya por cable.
+    WifiOff,
+    /// El PC no tiene tarjeta Wi-Fi: no puede recibir «Enviar pantalla».
+    NoWifi,
     Failed(String),
 }
 
@@ -60,7 +64,7 @@ impl Receiver {
                 if let Err(e) = r {
                     log(format!("Enviar pantalla: {e:#}"));
                     let mut st = shared.status.lock().unwrap();
-                    if *st != CastStatus::NeedsFeature {
+                    if !matches!(*st, CastStatus::NeedsFeature | CastStatus::WifiOff | CastStatus::NoWifi) {
                         *st = CastStatus::Failed(format!("{e:#}"));
                     }
                 }
@@ -151,6 +155,14 @@ fn restarted_since_install() -> bool {
     }
 }
 
+/// Abre los ajustes de Wi-Fi de Windows.
+pub fn open_wifi_settings() {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer.exe").arg("ms-settings:network-wifi").spawn();
+    }
+}
+
 /// Abre «Proyectar en este PC» en Configuración de Windows.
 pub fn open_projection_settings() {
     #[cfg(windows)]
@@ -200,7 +212,17 @@ mod imp {
         let applied = receiver.DisconnectAllAndApplySettings(&settings)?.Status()?;
         log(format!("Enviar pantalla: ajustes aplicados ({applied:?})"));
         if applied == MiracastReceiverApplySettingsStatus::MiracastNotSupported {
-            *shared.status.lock().unwrap() = CastStatus::NeedsFeature;
+            // Antes de pedir que instalen nada, mira si el problema es el Wi-Fi.
+            let st = match wifi_on() {
+                None => CastStatus::NoWifi,
+                Some(false) => CastStatus::WifiOff,
+                Some(true) => CastStatus::NeedsFeature,
+            };
+            log(format!("Enviar pantalla: no compatible ahora mismo ({st:?})"));
+            *shared.status.lock().unwrap() = st.clone();
+            if st != CastStatus::NeedsFeature {
+                return Ok(());
+            }
             anyhow::bail!("{}", t("Falta «Pantalla inalámbrica» en Windows", "Windows is missing “Wireless Display”"));
         }
         if applied != MiracastReceiverApplySettingsStatus::Success {
@@ -307,11 +329,48 @@ mod imp {
         Ok(())
     }
 
+    /// Ancho de las franjas negras a cada lado (se suponen simétricas: si una app oscura toca
+    /// un borde, el otro lado lo corrige) y alto de las de arriba y abajo.
+    fn black_bars(px: &[egui::Color32], w: usize, h: usize) -> (usize, usize) {
+        let black = |p: &egui::Color32| p.r() < 14 && p.g() < 14 && p.b() < 14;
+        let col_black = |x: usize| (1..16).all(|i| black(&px[(h * i / 16) * w + x]));
+        let row_black = |y: usize| (1..16).all(|i| black(&px[y * w + w * i / 16]));
+        let left = (0..w / 2).take_while(|&x| col_black(x)).count();
+        let right = (0..w / 2).take_while(|&x| col_black(w - 1 - x)).count();
+        let top = (0..h / 2).take_while(|&y| row_black(y)).count();
+        let bottom = (0..h / 2).take_while(|&y| row_black(h - 1 - y)).count();
+        let bx = left.min(right);
+        let by = top.min(bottom);
+        // Pantalla casi entera negra o franjas diminutas: no se recorta.
+        let bx = if bx < 4 || w - 2 * bx < w / 6 { 0 } else { bx };
+        let by = if by < 4 || h - 2 * by < h / 6 { 0 } else { by };
+        (bx, by)
+    }
+
+    /// ¿Está encendido el Wi-Fi del PC? `None` si no tiene tarjeta Wi-Fi.
+    fn wifi_on() -> Option<bool> {
+        use windows::Devices::Radios::{Radio, RadioKind, RadioState};
+        let radios = Radio::GetRadiosAsync().ok()?.join().ok()?;
+        let mut found = None;
+        for i in 0..radios.Size().ok()? {
+            let Ok(r) = radios.GetAt(i) else { continue };
+            if r.Kind().ok() == Some(RadioKind::WiFi) {
+                let on = r.State().ok() == Some(RadioState::On);
+                found = Some(found.unwrap_or(false) || on);
+            }
+        }
+        found
+    }
+
     /// Copia cada fotograma de la GPU a la memoria.
     struct Copier {
         device: ID3D11Device,
         context: ID3D11DeviceContext,
         target: Option<Target>,
+        /// Franjas negras a recortar (izquierda/derecha, arriba/abajo). Los móviles envían su
+        /// pantalla vertical dentro de un vídeo apaisado con franjas a los lados.
+        bars: (usize, usize),
+        frames: u64,
     }
 
     struct Target {
@@ -343,7 +402,7 @@ mod imp {
                     Some(&mut context),
                 )?;
             }
-            Ok(Self { device: device.ok_or_else(|| anyhow::anyhow!("sin Direct3D"))?, context: context.ok_or_else(|| anyhow::anyhow!("sin Direct3D"))?, target: None })
+            Ok(Self { device: device.ok_or_else(|| anyhow::anyhow!("sin Direct3D"))?, context: context.ok_or_else(|| anyhow::anyhow!("sin Direct3D"))?, target: None, bars: (0, 0), frames: 0 })
         }
 
         fn ensure(&mut self, width: u32, height: u32) -> anyhow::Result<()> {
@@ -408,11 +467,28 @@ mod imp {
             }
             let dark = pixels.iter().step_by(97).all(|p| p.r() < 10 && p.g() < 10 && p.b() < 10);
             shared.screen_dark.store(dark, Ordering::Relaxed);
-            let image = egui::ColorImage::new([w as usize, h as usize], pixels);
+            let (w, h) = (w as usize, h as usize);
+            // Cada medio segundo, más o menos, vuelve a medir las franjas (si el móvil gira, cambian).
+            if !dark && self.frames % 15 == 0 {
+                self.bars = black_bars(&pixels, w, h);
+            }
+            self.frames += 1;
+            let (bx, by) = self.bars;
+            let (cw, ch) = (w - 2 * bx, h - 2 * by);
+            let pixels = if bx == 0 && by == 0 {
+                pixels
+            } else {
+                let mut out = Vec::with_capacity(cw * ch);
+                for y in by..by + ch {
+                    out.extend_from_slice(&pixels[y * w + bx..y * w + bx + cw]);
+                }
+                out
+            };
+            let image = egui::ColorImage::new([cw, ch], pixels);
             let mut f = shared.frame.lock().unwrap();
             f.image = Some(Arc::new(image));
-            f.width = w as usize;
-            f.height = h as usize;
+            f.width = cw;
+            f.height = ch;
             f.seq += 1;
             Ok(())
         }
