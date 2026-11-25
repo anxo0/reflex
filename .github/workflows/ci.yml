@@ -16,14 +16,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: reflex-windows-x64.exe
-            bin: target/release/reflex.exe
+            artifact: ReflexMirror-windows-x64.exe
+            bin: target/release/ReflexMirror.exe
           - os: ubuntu-latest
-            artifact: reflex-linux-x64
-            bin: target/release/reflex
+            artifact: ReflexMirror-linux-x64
+            bin: target/release/ReflexMirror
           - os: macos-latest
-            artifact: reflex-macos-arm64
-            bin: target/release/reflex
+            artifact: ReflexMirror-macos-arm64
+            bin: target/release/ReflexMirror
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

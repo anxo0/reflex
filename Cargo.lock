@@ -3349,6 +3349,8 @@ dependencies = [
  "sha2",
  "sys-locale",
  "ureq",
+ "windows",
+ "windows-future",
  "windows-sys 0.61.2",
  "winresource",
  "zip",

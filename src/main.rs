@@ -7,6 +7,7 @@ mod app;
 mod audio;
 mod i18n;
 mod logs;
+mod miracast;
 mod paths;
 mod recorder;
 mod setup;

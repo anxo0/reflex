@@ -70,7 +70,7 @@ You need [Rust](https://rustup.rs) 1.88 or newer and a C/C++ compiler (on Window
 cargo build --release
 ```
 
-The executable ends up in `target/release/`. On Linux you also need the ALSA headers (`libasound2-dev`).
+The executable (`ReflexMirror`) ends up in `target/release/`. On Linux you also need the ALSA headers (`libasound2-dev`).
 
 Tests: `cargo test` (some use `ffmpeg`, if installed, to generate real H.264 video).
 

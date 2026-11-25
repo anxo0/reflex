@@ -131,6 +131,11 @@ impl Adb {
         }
     }
 
+    /// Corta la conexión inalámbrica con un móvil.
+    pub fn disconnect(&self, serial: &str) -> Result<()> {
+        self.run(&["disconnect", serial]).map(|_| ())
+    }
+
     pub fn pair(&self, addr: &str, code: &str) -> Result<String> {
         let out = self.output(&["pair", addr, code])?;
         let t = format!(

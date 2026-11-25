@@ -9,6 +9,12 @@ readme = "README.md"
 keywords = ["mirror", "android", "screen", "scrcpy", "airplay"]
 categories = ["multimedia::video", "gui"]
 
+# El ejecutable se llama ReflexMirror para no confundirse con otros programas llamados Reflex
+# (Discord, por ejemplo, lo detectaba como el juego «Reflex Arena»).
+[[bin]]
+name = "ReflexMirror"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 sys-locale = "0.3"
@@ -28,6 +34,13 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
+# Receptor de «Enviar pantalla» (Miracast) y su vídeo por Direct3D.
+windows = { version = "0.62", features = [
+  "ApplicationModel_Core", "Foundation", "Media_Core", "Media_Miracast", "Media_Playback",
+  "Graphics_DirectX_Direct3D11", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_System_Com",
+] }
+windows-future = "0.3"
 
 [profile.release]
 opt-level = 3
