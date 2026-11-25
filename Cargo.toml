@@ -27,7 +27,7 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
 
 [profile.release]
 opt-level = 3

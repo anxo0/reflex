@@ -77,6 +77,8 @@ pub struct ReflexApp {
     sized_for: (u32, u32),
     tools_hidden: bool,
     mirror_aspect: f32,
+    /// Proporción con la que se abrió la ventana (la última conocida de ese móvil).
+    expected_aspect: f32,
     /// Alto del móvil (vertical) que dejó el usuario; se recuerda entre sesiones.
     mirror_height: f32,
     opts: Options,
@@ -117,6 +119,7 @@ impl ReflexApp {
             sized_for: (0, 0),
             tools_hidden: false,
             mirror_aspect: 9.0 / 20.0,
+            expected_aspect: 9.0 / 20.0,
             mirror_height: load_mirror_height(),
             opts: Options::default(),
             pair_code: String::new(),
@@ -226,8 +229,13 @@ impl ReflexApp {
         self.last_seq = 0;
         self.sized_for = (0, 0);
         self.device_screen_off = self.opts.screen_off;
+        let serial_for_size = serial.clone();
         self.session = Some(Session::start(adb, serial, self.opts.clone(), ctx.clone()));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(WINDOW.x + GAP + TOOLS_W, WINDOW.y)));
+        // La ventana se abre ya con su tamaño final: el que dejó el usuario y la forma de ese móvil.
+        let aspect = load_aspect(&serial_for_size).unwrap_or(9.0 / 20.0);
+        self.expected_aspect = aspect;
+        self.mirror_aspect = aspect;
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(mirror_window_size(self.mirror_height, aspect)));
     }
 
     fn stop_session(&mut self, ctx: &egui::Context) {
@@ -898,23 +906,21 @@ impl ReflexApp {
         let (vw, vh) = match (video_size, &self.texture) {
             ((w, _), _) if w > 0 => video_size,
             (_, Some(t)) => (t.size()[0] as u32, t.size()[1] as u32),
-            _ => (9, 20),
+            _ => (0, 0),
         };
-        let aspect = vw as f32 / vh as f32;
+        // Sin imagen todavía: se dibuja con la forma prevista para que no haya saltos.
+        let aspect = if vh > 0 { vw as f32 / vh as f32 } else { self.expected_aspect };
         self.mirror_aspect = aspect;
 
         // Ajusta la ventana a la forma del móvil o la tablet, en vertical u horizontal.
+        // Solo se redimensiona si la forma real no es la prevista (otro móvil o lo has girado).
         if video_size.0 > 0 && video_size != self.sized_for && !self.fullscreen {
             self.sized_for = video_size;
-            let phone = if aspect <= 1.0 {
-                let h = self.mirror_height;
-                vec2((h - 2.0 * BEZEL) * aspect + 2.0 * BEZEL, h)
-            } else {
-                let w = self.mirror_height * 1.28;
-                vec2(w, (w - 2.0 * BEZEL) / aspect + 2.0 * BEZEL)
-            };
-            let size = vec2(phone.x + GAP + TOOLS_W, phone.y.max(TOOLS_MIN_H));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            if (aspect - self.expected_aspect).abs() > 0.01 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(mirror_window_size(self.mirror_height, aspect)));
+                self.expected_aspect = aspect;
+            }
+            save_aspect(&session.serial, aspect);
         }
 
         if self.fullscreen {
@@ -1091,13 +1097,60 @@ fn mirror_size_path() -> std::path::PathBuf {
     paths::data_dir().join("tamano_movil.txt")
 }
 
+/// Preferencias de la ventana de duplicado: `alto=…` y `aspecto.<serial>=…`, una por línea.
+fn read_mirror_prefs() -> Vec<(String, String)> {
+    let text = std::fs::read_to_string(mirror_size_path()).unwrap_or_default();
+    text.lines()
+        .filter_map(|l| match l.split_once('=') {
+            Some((k, v)) => Some((k.trim().to_string(), v.trim().to_string())),
+            // Formato antiguo: solo el alto.
+            None if !l.trim().is_empty() => Some(("alto".to_string(), l.trim().to_string())),
+            None => None,
+        })
+        .collect()
+}
+
+fn write_mirror_pref(key: &str, value: String) {
+    let mut prefs = read_mirror_prefs();
+    match prefs.iter_mut().find(|(k, _)| k == key) {
+        Some(p) => p.1 = value,
+        None => prefs.push((key.to_string(), value)),
+    }
+    let text: String = prefs.iter().map(|(k, v)| format!("{k}={v}
+")).collect();
+    let _ = std::fs::create_dir_all(paths::data_dir());
+    let _ = std::fs::write(mirror_size_path(), text);
+}
+
+fn read_mirror_pref(key: &str) -> Option<f32> {
+    read_mirror_prefs().into_iter().find(|(k, _)| k == key).and_then(|(_, v)| v.parse().ok())
+}
+
 fn load_mirror_height() -> f32 {
-    std::fs::read_to_string(mirror_size_path()).ok().and_then(|s| s.trim().parse().ok()).filter(|h: &f32| (320.0..4000.0).contains(h)).unwrap_or(WINDOW.y)
+    read_mirror_pref("alto").filter(|h| (320.0..4000.0).contains(h)).unwrap_or(WINDOW.y)
 }
 
 fn save_mirror_height(h: f32) {
-    let _ = std::fs::create_dir_all(paths::data_dir());
-    let _ = std::fs::write(mirror_size_path(), format!("{h:.0}"));
+    write_mirror_pref("alto", format!("{h:.0}"));
+}
+
+fn load_aspect(serial: &str) -> Option<f32> {
+    read_mirror_pref(&format!("aspecto.{serial}")).filter(|a| (0.2..5.0).contains(a))
+}
+
+fn save_aspect(serial: &str, aspect: f32) {
+    write_mirror_pref(&format!("aspecto.{serial}"), format!("{aspect:.4}"));
+}
+
+/// Tamaño de la ventana de duplicado: el móvil con su marco más la columna de controles.
+fn mirror_window_size(height: f32, aspect: f32) -> Vec2 {
+    let phone = if aspect <= 1.0 {
+        vec2((height - 2.0 * BEZEL) * aspect + 2.0 * BEZEL, height)
+    } else {
+        let w = height * 1.28;
+        vec2(w, (w - 2.0 * BEZEL) / aspect + 2.0 * BEZEL)
+    };
+    vec2(phone.x + GAP + TOOLS_W, phone.y.max(TOOLS_MIN_H))
 }
 
 fn apply_theme(ctx: &egui::Context) {
@@ -1300,9 +1353,6 @@ fn map_key(key: egui::Key, m: egui::Modifiers) -> Option<(u32, u32)> {
 impl eframe::App for ReflexApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        if !self.fullscreen {
-            crate::window::keep_borderless();
-        }
 
         if self.adb.is_none() && self.setup.lock().unwrap().done {
             self.refresh_adb(&ctx);
