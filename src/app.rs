@@ -116,6 +116,8 @@ pub struct ReflexApp {
     cast_seq: u64,
     /// La ventana está en modo móvil porque hay un móvil enviando su pantalla.
     cast_live: bool,
+    feature_installing: Arc<AtomicBool>,
+    retry_cast_after_install: bool,
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
     sized_for: (u32, u32),
@@ -142,7 +144,6 @@ pub struct ReflexApp {
     touching: bool,
     fullscreen: bool,
     device_screen_off: bool,
-    show_log: bool,
     clipboard_seq: u64,
     last_title: String,
 }
@@ -170,6 +171,8 @@ impl ReflexApp {
             cast_texture: None,
             cast_seq: 0,
             cast_live: false,
+            feature_installing: Arc::new(AtomicBool::new(false)),
+            retry_cast_after_install: false,
             texture: None,
             last_seq: 0,
             sized_for: (0, 0),
@@ -192,7 +195,6 @@ impl ReflexApp {
             touching: false,
             fullscreen: false,
             device_screen_off: false,
-            show_log: false,
             clipboard_seq: 1,
             last_title: String::new(),
         };
@@ -886,17 +888,39 @@ impl ReflexApp {
                 ui.add_space(8.0);
                 ui.label(RichText::new(t("Para recibir la pantalla del móvil, Windows necesita «Pantalla inalámbrica». Es gratis y de Microsoft. Solo se instala una vez.", "To receive your phone's screen, Windows needs “Wireless Display”. It is free, from Microsoft, and installs once.")).color(muted()));
                 ui.add_space(14.0);
-                numbered(ui, 1, t("Pulsa «Abrir funciones opcionales».", "Click “Open optional features”."));
-                numbered(ui, 2, t("Pulsa «Ver funciones», busca «Pantalla inalámbrica», márcala e instálala.", "Click “View features”, search “Wireless Display”, tick it and install."));
-                numbered(ui, 3, t("Cuando termine, vuelve aquí y pulsa «Ya lo he instalado».", "When it finishes, come back and click “I have installed it”."));
-                ui.add_space(12.0);
-                if primary_button(ui, t("Abrir funciones opcionales", "Open optional features"), None).clicked() {
-                    crate::miracast::open_optional_features();
+                let installing = self.feature_installing.load(Ordering::SeqCst);
+                if installing {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(16.0).color(BLUE_BRIGHT));
+                        ui.label(RichText::new(t("Instalando… puede tardar unos minutos.", "Installing… it can take a few minutes.")).color(muted()));
+                    });
+                } else {
+                    ui.label(RichText::new(t("Windows te pedirá permiso de administrador.", "Windows will ask for administrator permission.")).size(12.0).color(muted()));
+                    ui.add_space(8.0);
+                    if primary_button(ui, t("Instalar ahora", "Install now"), None).clicked() {
+                        let flag = self.feature_installing.clone();
+                        let ctx = ui.ctx().clone();
+                        flag.store(true, Ordering::SeqCst);
+                        std::thread::spawn(move || {
+                            crate::miracast::install_feature();
+                            flag.store(false, Ordering::SeqCst);
+                            ctx.request_repaint();
+                        });
+                        self.retry_cast_after_install = true;
+                    }
+                    ui.add_space(6.0);
+                    if ui.add(egui::Button::new(RichText::new(t("Prefiero instalarlo yo desde Configuración", "I prefer to install it from Settings")).size(13.0).color(accent())).frame(false)).clicked() {
+                        crate::miracast::open_optional_features();
+                    }
+                    if ui.add(egui::Button::new(RichText::new(t("Ya lo he instalado", "I have installed it")).size(13.0).color(accent())).frame(false)).clicked() {
+                        retry = true;
+                    }
                 }
-                ui.add_space(6.0);
-                if ui.add(egui::Button::new(RichText::new(t("Ya lo he instalado", "I have installed it")).size(14.0).color(accent())).frame(false)).clicked() {
+                if self.retry_cast_after_install && !installing {
+                    self.retry_cast_after_install = false;
                     retry = true;
                 }
+                ui.ctx().request_repaint_after(Duration::from_millis(500));
             }
             crate::miracast::CastStatus::Failed(e) => {
                 ui.label(RichText::new(t("No se puede recibir ahora", "Cannot receive right now")).size(24.0).strong().color(ink()));
@@ -1161,7 +1185,7 @@ impl ReflexApp {
         section(ui, t("INFORMACIÓN", "INFORMATION"));
         let mut log = false;
         list_group(ui, |ui| {
-            if nav_row(ui, icon!("file-text"), t("Registro", "Log"), "").on_hover_text(t("Lo que ha pasado por dentro, por si algo falla", "What happened under the hood, in case something fails")).clicked() {
+            if nav_row(ui, icon!("file-text"), t("Registro", "Log"), "").on_hover_text(t("Abre la carpeta con el archivo del registro, por si algo falla", "Opens the folder with the log file, in case something fails")).clicked() {
                 log = true;
             }
             row_divider(ui);
@@ -1170,7 +1194,7 @@ impl ReflexApp {
             }
         });
         if log {
-            self.show_log = true;
+            logs::reveal();
         }
         if let Some(p) = go {
             self.settings_page = p;
@@ -1604,18 +1628,6 @@ impl ReflexApp {
         if save_size {
             save_mirror_height(self.mirror_height);
         }
-    }
-
-    fn log_window(&mut self, ctx: &egui::Context) {
-        let mut open = self.show_log;
-        egui::Window::new(t("Registro", "Log")).open(&mut open).default_size([400.0, 320.0]).show(ctx, |ui| {
-            egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                for line in logs::snapshot() {
-                    ui.monospace(line);
-                }
-            });
-        });
-        self.show_log = open;
     }
 }
 
@@ -2132,9 +2144,6 @@ impl eframe::App for ReflexApp {
             });
         }
 
-        if self.show_log {
-            self.log_window(&ctx);
-        }
         if self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(7))
             || self.task_busy.load(Ordering::SeqCst)
             || matches!(*self.wifi.lock().unwrap(), WifiStage::Working(_))

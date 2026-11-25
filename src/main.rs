@@ -16,6 +16,7 @@ mod window;
 
 fn main() -> eframe::Result<()> {
     paths::migrate_legacy_data();
+    logs::init();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Reflex")

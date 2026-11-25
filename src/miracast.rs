@@ -88,6 +88,33 @@ impl Drop for Receiver {
     }
 }
 
+/// Instala «Pantalla inalámbrica» con DISM. Windows pide permiso de administrador.
+/// Bloquea hasta que termina; devuelve si salió bien.
+pub fn install_feature() -> bool {
+    #[cfg(windows)]
+    {
+        let mut cmd = std::process::Command::new("powershell.exe");
+        cmd.args([
+            "-NoProfile",
+            "-Command",
+            "$p = Start-Process dism.exe -ArgumentList '/Online','/Add-Capability','/CapabilityName:App.WirelessDisplay.Connect~~~~0.0.1.0','/NoRestart' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode",
+        ]);
+        crate::adb::hide_window(&mut cmd);
+        match cmd.status() {
+            Ok(s) => {
+                log(format!("Instalación de Pantalla inalámbrica: {s}"));
+                s.success() || s.code() == Some(3010)
+            }
+            Err(e) => {
+                log(format!("No se pudo instalar Pantalla inalámbrica: {e}"));
+                false
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    false
+}
+
 /// Abre los ajustes de Windows donde se instala «Pantalla inalámbrica».
 pub fn open_optional_features() {
     #[cfg(windows)]
