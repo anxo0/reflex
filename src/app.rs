@@ -580,9 +580,6 @@ impl ReflexApp {
         if toggle_fs {
             self.toggle_fullscreen(ctx);
         }
-        if self.mirror_focus && !self.fullscreen {
-            ui.painter().rect_stroke(rect.expand(9.0), 16.0, Stroke::new(1.5, Color32::from_rgb(70, 130, 220)), StrokeKind::Outside);
-        }
     }
 
     fn iphone_view(&mut self, ui: &mut egui::Ui) {
