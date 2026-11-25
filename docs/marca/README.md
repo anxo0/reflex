@@ -1,6 +1,6 @@
 # Reflex: manual de marca
 
-<img src="icono.png" width="128" alt="Icono de Reflex">
+<img src="logos/reflex-icono-512.png" width="128" alt="Icono de Reflex">
 
 Reflex duplica y controla la pantalla del móvil en el PC. Es libre, open source y no tiene límite de tiempo. Este manual fija cómo se ve y cómo habla.
 
@@ -55,3 +55,18 @@ Los botones de la barra usan símbolos Unicode sencillos (◀ ⌂ ▤ ⟳ ⏺) j
 - [`tokens.json`](tokens.json): colores, tipografía, espaciado y esquinas en formato de tokens.
 - [`assets/icon.svg`](../../assets/icon.svg): icono vectorial, fuente de todos los tamaños.
 - [`assets/reflex.ico`](../../assets/reflex.ico): icono de Windows.
+
+## Logos para descargar
+
+Todo en [`logos/`](logos):
+
+| Archivo | Uso |
+|---|---|
+| `reflex-icono.svg` | Icono principal en vectorial |
+| `reflex-icono-mono.svg` | Icono en azul plano, para impresión o donde no quepa el degradado |
+| `reflex-logo-claro.svg` | Icono y nombre, sobre fondos claros |
+| `reflex-logo-oscuro.svg` | Icono y nombre, sobre fondos oscuros |
+| `reflex-icono-16.png` … `reflex-icono-512.png` | Icono en PNG de 16 a 512 px |
+| `reflex.ico` | Icono de Windows (16 a 256 px) |
+
+Los logos con nombre usan la tipografía Sora: instálala desde Google Fonts para que se vean exactamente así, o conviértelos a trazados antes de imprimir.

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2900 1024">
+  <defs><linearGradient id="t" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2447E0"/><stop offset="1" stop-color="#001489"/></linearGradient><linearGradient id="r" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#A9BFFF"/><stop offset="1" stop-color="#A9BFFF" stop-opacity="0.18"/></linearGradient></defs>
+  <g><rect width="1024" height="1024" rx="228" fill="url(#t)"/><rect x="452" y="196" width="310" height="632" rx="76" fill="url(#r)"/><rect x="262" y="196" width="310" height="632" rx="76" fill="#FFFFFF"/><rect x="372" y="244" width="90" height="24" rx="12" fill="#001489"/></g>
+  <text x="1280" y="760" font-family="Sora, 'Segoe UI', Arial, sans-serif" font-weight="600" font-size="620" letter-spacing="-12" fill="#EEF2FF">Reflex</text>
+</svg>
