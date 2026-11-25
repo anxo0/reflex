@@ -1,5 +1,7 @@
 # Reflex
 
+<img src="assets/icon-256.png" width="96" alt="Icono de Reflex">
+
 Duplica y controla la pantalla de tu móvil en el PC. **Libre, open source y sin límite de tiempo**: sin cuentas, sin anuncios, sin marcas de agua.
 
 Escrito en Rust. Funciona en Windows, Linux y macOS.
@@ -81,6 +83,10 @@ Pruebas: `cargo test` (algunas usan `ffmpeg` si está instalado para generar ví
 - `src/app.rs`: interfaz.
 
 En el móvil se usa el servidor de [scrcpy](https://github.com/Genymobile/scrcpy) v5.0.1, que se descarga desde su release oficial y se comprueba con su SHA-256. La parte de PC (interfaz, decodificación, control, audio, grabación) es propia.
+
+## Marca
+
+Icono, colores, tipografía y voz de Reflex en el [manual de marca](docs/marca/README.md).
 
 ## Licencia
 
