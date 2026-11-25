@@ -103,7 +103,11 @@ pub fn install_feature() -> bool {
         match cmd.status() {
             Ok(s) => {
                 log(format!("Instalación de Pantalla inalámbrica: {s}"));
-                s.success() || s.code() == Some(3010)
+                let ok = s.success() || s.code() == Some(3010);
+                if ok {
+                    let _ = std::fs::write(installed_marker(), chrono::Local::now().to_rfc3339());
+                }
+                ok
             }
             Err(e) => {
                 log(format!("No se pudo instalar Pantalla inalámbrica: {e}"));
@@ -113,6 +117,16 @@ pub fn install_feature() -> bool {
     }
     #[cfg(not(windows))]
     false
+}
+
+fn installed_marker() -> std::path::PathBuf {
+    crate::paths::data_dir().join("pantalla_inalambrica_instalada.txt")
+}
+
+/// Ya se instaló desde Reflex en este arranque de Windows o antes: si aún no funciona,
+/// lo que falta es reiniciar el PC.
+pub fn installed_needs_restart() -> bool {
+    installed_marker().exists()
 }
 
 /// Abre los ajustes de Windows donde se instala «Pantalla inalámbrica».

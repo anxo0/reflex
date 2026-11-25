@@ -935,7 +935,18 @@ impl ReflexApp {
                 ui.label(RichText::new(t("Para recibir la pantalla del móvil, Windows necesita «Pantalla inalámbrica». Es gratis y de Microsoft. Solo se instala una vez.", "To receive your phone's screen, Windows needs “Wireless Display”. It is free, from Microsoft, and installs once.")).color(muted()));
                 ui.add_space(14.0);
                 let installing = self.feature_installing.load(Ordering::SeqCst);
-                if installing {
+                if !installing && crate::miracast::installed_needs_restart() {
+                    card(ice_soft(), None).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(t("Ya está instalado: falta reiniciar el PC", "Already installed: restart the PC")).strong().color(accent()));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(t("Windows activa «Pantalla inalámbrica» al reiniciar. Comprueba también que el Wi-Fi del PC está encendido: se usa para recibir aunque tengas internet por cable.", "Windows turns on “Wireless Display” after a restart. Also check the PC's Wi-Fi is on: it is used to receive even if your internet comes through a cable.")).size(13.0).color(ink()));
+                    });
+                    ui.add_space(8.0);
+                    if ui.add(egui::Button::new(RichText::new(t("Ya he reiniciado, probar otra vez", "I have restarted, try again")).size(13.0).color(accent())).frame(false)).clicked() {
+                        retry = true;
+                    }
+                } else if installing {
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new().size(16.0).color(BLUE_BRIGHT));
                         ui.label(RichText::new(t("Instalando… puede tardar unos minutos.", "Installing… it can take a few minutes.")).color(muted()));
