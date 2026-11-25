@@ -22,6 +22,8 @@ mod imp {
 
     const SUBCLASS_ID: usize = 0x5245_464C; // «REFL»
 
+    static HWND_VALUE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
     unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
         match msg {
             // Toda la ventana es zona de cliente: no hay marco que calcular.
@@ -46,6 +48,7 @@ mod imp {
         let Ok(handle) = cc.window_handle() else { return };
         let RawWindowHandle::Win32(w) = handle.as_raw() else { return };
         let hwnd = w.hwnd.get() as HWND;
+        HWND_VALUE.store(hwnd as isize, std::sync::atomic::Ordering::Relaxed);
         // SAFETY: hwnd es la ventana viva de eframe; la subclase vive lo mismo que la ventana
         // y los punteros apuntan a valores locales del tamaño indicado.
         unsafe {
@@ -59,11 +62,35 @@ mod imp {
             // Fuerza a recalcular el marco con la nueva subclase.
             SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
+        // Tamaño real (sin el marco que ya no existe): genera un evento de tamaño y la
+        // superficie de dibujo se ajusta, así el contenido no sale desplazado al arrancar.
+        resize(&cc.egui_ctx, crate::app::WINDOW);
+    }
+
+    /// Cambia el tamaño de la ventana directamente con Windows. Pasar por winit no sirve:
+    /// le sumaría el marco nativo que hemos quitado y lo volvería a pintar.
+    pub fn resize(ctx: &eframe::egui::Context, size: eframe::egui::Vec2) {
+        let hwnd = HWND_VALUE.load(std::sync::atomic::Ordering::Relaxed);
+        if hwnd == 0 {
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(size));
+            return;
+        }
+        let ppp = ctx.pixels_per_point();
+        let (w, h) = ((size.x * ppp).round() as i32, (size.y * ppp).round() as i32);
+        // SAFETY: la ventana sigue viva mientras la app se ejecuta.
+        unsafe {
+            SetWindowPos(hwnd as HWND, std::ptr::null_mut(), 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
     }
 }
 
 #[cfg(windows)]
-pub use imp::init;
+pub use imp::{init, resize};
 
 #[cfg(not(windows))]
 pub fn init(_cc: &eframe::CreationContext<'_>) {}
+
+#[cfg(not(windows))]
+pub fn resize(ctx: &eframe::egui::Context, size: eframe::egui::Vec2) {
+    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(size));
+}

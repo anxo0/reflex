@@ -31,7 +31,7 @@ const REC: Color32 = Color32::from_rgb(0xFF, 0x5A, 0x4F);
 const ERROR: Color32 = Color32::from_rgb(0xB4, 0x23, 0x18);
 const OK: Color32 = Color32::from_rgb(0x1D, 0x7A, 0x46);
 
-const WINDOW: Vec2 = vec2(440.0, 860.0);
+pub const WINDOW: Vec2 = vec2(440.0, 860.0);
 const BEZEL: f32 = 8.0;
 const GAP: f32 = 12.0;
 const TOOLS_W: f32 = 56.0;
@@ -233,9 +233,10 @@ impl ReflexApp {
         self.session = Some(Session::start(adb, serial, self.opts.clone(), ctx.clone()));
         // La ventana se abre ya con su tamaño final: el que dejó el usuario y la forma de ese móvil.
         let aspect = load_aspect(&serial_for_size).unwrap_or(9.0 / 20.0);
+        self.mirror_height = self.mirror_height.min(max_phone_height(ctx));
         self.expected_aspect = aspect;
         self.mirror_aspect = aspect;
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(mirror_window_size(self.mirror_height, aspect)));
+        crate::window::resize(ctx, mirror_window_size(self.mirror_height, aspect));
     }
 
     fn stop_session(&mut self, ctx: &egui::Context) {
@@ -253,7 +254,7 @@ impl ReflexApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         if had {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW));
+            crate::window::resize(ctx, WINDOW);
         }
     }
 
@@ -430,7 +431,9 @@ impl ReflexApp {
                 .fill(Color32::WHITE)
                 .corner_radius(CornerRadius::same(12))
                 .min_size(vec2(ui.available_width(), 46.0));
-                if ui.add(b).clicked() {
+                let r = ui.add(b);
+                hover_overlay(ui, &r, 12, Color32::from_rgba_unmultiplied(0x24, 0x47, 0xE0, 30));
+                if r.clicked() {
                     start = Some(d.serial.clone());
                 }
                 if !d.is_wireless() {
@@ -768,7 +771,7 @@ impl ReflexApp {
                     ui.set_width(rect.width() - 10.0);
                     ui.set_max_height(rect.height() - 18.0);
                     let tool = |ui: &mut egui::Ui, img: egui::ImageSource<'static>, tint: Color32, tip: &'static str| -> bool {
-                        let r = ui.add(egui::Button::image(egui::Image::new(img).tint(tint).fit_to_exact_size(vec2(20.0, 20.0))).frame(false).min_size(vec2(40.0, 40.0)));
+                        let r = icon_button_raw(ui, img, tint);
                         if r.hovered() {
                             hint.set(Some((r.rect, tip)));
                         }
@@ -845,17 +848,8 @@ impl ReflexApp {
                             let (r, resp) = ui.allocate_exact_size(vec2(40.0, 28.0), Sense::click_and_drag());
                             egui::Image::new(icon!("resize")).tint(DARK_MUTED).paint_at(ui, egui::Rect::from_center_size(r.center(), vec2(16.0, 16.0)));
                             // Cambio de tamaño propio: crece en diagonal y mantiene la forma del móvil.
-                            if resp.dragged()
-                                && let Some(inner) = ctx.input(|i| i.viewport().inner_rect)
-                            {
-                                let d = resp.drag_delta();
-                                let aspect = self.mirror_aspect;
-                                let phone_h = inner.height();
-                                let screen_w = |h: f32| (h - 2.0 * BEZEL) * aspect + 2.0 * BEZEL;
-                                let dh = if (d.x / aspect).abs() > d.y.abs() { d.x / aspect } else { d.y };
-                                let new_h = (phone_h + dh).clamp(TOOLS_MIN_H.min(480.0), 3000.0);
-                                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(screen_w(new_h) + GAP + TOOLS_W, new_h)));
-                                self.mirror_height = if aspect <= 1.0 { new_h } else { (screen_w(new_h) / 1.28).max(480.0) };
+                            if resp.dragged() {
+                                self.resize_mirror(ctx, resp.drag_delta());
                             }
                             if resp.drag_stopped() {
                                 save_mirror_height(self.mirror_height);
@@ -877,6 +871,17 @@ impl ReflexApp {
             fg.rect_stroke(bg, CornerRadius::same(8), Stroke::new(1.0, DARK_LINE), egui::StrokeKind::Inside);
             fg.galley(bg.min + vec2(10.0, 6.0), galley, DARK_TEXT);
         }
+    }
+
+    /// Agranda o encoge el móvil en diagonal, manteniendo su forma.
+    fn resize_mirror(&mut self, ctx: &egui::Context, d: Vec2) {
+        let Some(inner) = ctx.input(|i| i.viewport().inner_rect) else { return };
+        let aspect = self.mirror_aspect;
+        let screen_w = |h: f32| (h - 2.0 * BEZEL) * aspect + 2.0 * BEZEL;
+        let dh = if (d.x / aspect).abs() > d.y.abs() { d.x / aspect } else { d.y };
+        let new_h = (inner.height() + dh).clamp(TOOLS_MIN_H.min(480.0), max_phone_height(ctx));
+        crate::window::resize(ctx, vec2(screen_w(new_h) + GAP + TOOLS_W, new_h));
+        self.mirror_height = if aspect <= 1.0 { new_h } else { (screen_w(new_h) / 1.28).max(480.0) };
     }
 
     /// La ventana es el propio móvil; los controles flotan a su derecha.
@@ -917,7 +922,7 @@ impl ReflexApp {
         if video_size.0 > 0 && video_size != self.sized_for && !self.fullscreen {
             self.sized_for = video_size;
             if (aspect - self.expected_aspect).abs() > 0.01 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(mirror_window_size(self.mirror_height, aspect)));
+                crate::window::resize(ctx, mirror_window_size(self.mirror_height, aspect));
                 self.expected_aspect = aspect;
             }
             save_aspect(&session.serial, aspect);
@@ -937,6 +942,8 @@ impl ReflexApp {
         let screen_center = if self.fullscreen { inner_max.center() } else { pos2(inner_max.max.x - screen_size.x / 2.0, inner_max.center().y) };
         let screen = egui::Rect::from_center_size(screen_center, screen_size);
         let phone = screen.expand(BEZEL);
+        // Esquina inferior derecha del móvil: se arrastra para cambiar el tamaño.
+        let corner = egui::Rect::from_min_max(phone.max - vec2(30.0, 30.0), phone.max);
 
         let radius = (phone.width().min(phone.height()) * 0.09).clamp(14.0, 40.0);
         ui.painter().rect_filled(phone, CornerRadius::same(radius as u8), DARK_RAISED);
@@ -972,6 +979,24 @@ impl ReflexApp {
             ui.painter().text(c + vec2(0.0, logo / 2.0 + 26.0), egui::Align2::CENTER_TOP, t("Toca para encenderla", "Click to wake it"), egui::FontId::proportional(12.0), DARK_MUTED);
         }
         let resp = ui.interact(screen, ui.scope_id().with("pantalla"), Sense::click_and_drag());
+        let mut pending_resize: Option<Vec2> = None;
+        let mut save_size = false;
+        if !self.fullscreen {
+            let handle = ui.interact(corner, ui.scope_id().with("esquina"), Sense::drag());
+            let k = ctx.animate_bool_with_time(handle.id, handle.hovered() || handle.dragged(), 0.12);
+            if k > 0.0 {
+                ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                // Dos trazos en la esquina, como un asa de tamaño.
+                let c = phone.max - vec2(radius * 0.32, radius * 0.32);
+                let col = ICE.gamma_multiply(k);
+                ui.painter().line_segment([c + vec2(-14.0, 0.0), c + vec2(0.0, -14.0)], Stroke::new(2.0, col));
+                ui.painter().line_segment([c + vec2(-7.0, 0.0), c + vec2(0.0, -7.0)], Stroke::new(2.0, col));
+            }
+            if handle.dragged() {
+                pending_resize = Some(handle.drag_delta());
+            }
+            save_size |= handle.drag_stopped();
+        }
 
         let to_device = |p: egui::Pos2| -> (i32, i32) {
             let x = ((p.x - screen.min.x) / screen.width()).clamp(0.0, 1.0) * vw as f32;
@@ -991,7 +1016,7 @@ impl ReflexApp {
         for ev in events {
             match ev {
                 egui::Event::PointerButton { pos, button, pressed, .. } => {
-                    let inside = screen.contains(pos);
+                    let inside = screen.contains(pos) && !corner.contains(pos);
                     match (button, pressed) {
                         (egui::PointerButton::Primary, true) if inside => {
                             self.touching = true;
@@ -1058,8 +1083,8 @@ impl ReflexApp {
             let factor = if zoom > 0.0 { 1.08 } else { 1.0 / 1.08 };
             let tools = GAP + TOOLS_W;
             let phone = vec2(inner.width() - tools, inner.height()) * factor;
-            if phone.y >= 320.0 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(phone.x + tools, phone.y)));
+            if phone.y >= 320.0 && phone.y <= max_phone_height(ctx) {
+                crate::window::resize(ctx, vec2(phone.x + tools, phone.y));
                 self.mirror_height = if aspect <= 1.0 { phone.y } else { (phone.x / 1.28).max(480.0) };
                 save_mirror_height(self.mirror_height);
             }
@@ -1075,6 +1100,12 @@ impl ReflexApp {
         self.mirror_tools(ui, ctx, tools);
         if toggle_fs {
             self.toggle_fullscreen(ctx);
+        }
+        if let Some(d) = pending_resize {
+            self.resize_mirror(ctx, d);
+        }
+        if save_size {
+            save_mirror_height(self.mirror_height);
         }
     }
 
@@ -1142,6 +1173,11 @@ fn save_aspect(serial: &str, aspect: f32) {
     write_mirror_pref(&format!("aspecto.{serial}"), format!("{aspect:.4}"));
 }
 
+/// Alto máximo del móvil: lo que cabe en la pantalla, con un margen.
+fn max_phone_height(ctx: &egui::Context) -> f32 {
+    ctx.input(|i| i.viewport().monitor_size).map(|m| (m.y - 60.0).max(480.0)).unwrap_or(1000.0)
+}
+
 /// Tamaño de la ventana de duplicado: el móvil con su marco más la columna de controles.
 fn mirror_window_size(height: f32, aspect: f32) -> Vec2 {
     let phone = if aspect <= 1.0 {
@@ -1186,8 +1222,23 @@ fn card(fill: Color32, stroke: Option<Color32>) -> egui::Frame {
 }
 
 fn icon_button(ui: &mut egui::Ui, src: egui::ImageSource<'static>, tint: Color32, tip: &str) -> egui::Response {
-    let img = egui::Image::new(src).tint(tint).fit_to_exact_size(vec2(20.0, 20.0));
-    ui.add(egui::Button::image(img).frame(false).min_size(vec2(40.0, 40.0))).on_hover_text(tip)
+    icon_button_raw(ui, src, tint).on_hover_text(tip)
+}
+
+/// Botón de icono con fondo suave al pasar el ratón y al pulsar.
+fn icon_button_raw(ui: &mut egui::Ui, src: egui::ImageSource<'static>, tint: Color32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
+    let dark = tint.r() > 0x90 && tint.g() > 0x90;
+    let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+    if hover > 0.0 {
+        let base = if dark { DARK_LINE } else { ICE_SOFT };
+        let fill = if resp.is_pointer_button_down_on() { if dark { Color32::from_rgb(0x33, 0x3B, 0x5C) } else { Color32::from_rgb(0xDC, 0xE6, 0xFF) } } else { base };
+        ui.painter().rect_filled(rect.shrink(2.0), CornerRadius::same(10), fill.gamma_multiply(hover));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let icon_tint = if !dark && resp.hovered() { BLUE } else { tint };
+    egui::Image::new(src).tint(icon_tint).paint_at(ui, egui::Rect::from_center_size(rect.center(), vec2(20.0, 20.0)));
+    resp
 }
 
 fn icon_tile(ui: &mut egui::Ui, src: egui::ImageSource<'static>, tint: Color32, bg: Color32) {
@@ -1215,6 +1266,7 @@ fn option_card(ui: &mut egui::Ui, src: egui::ImageSource<'static>, title: &str, 
         .interact(Sense::click());
     if r.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.painter().rect_stroke(r.rect, CornerRadius::same(18), Stroke::new(1.5, ICE), egui::StrokeKind::Inside);
     }
     r
 }
@@ -1225,7 +1277,18 @@ fn primary_button(ui: &mut egui::Ui, label: &str, icon: Option<egui::ImageSource
         Some(src) => egui::Button::image_and_text(egui::Image::new(src).tint(Color32::WHITE).fit_to_exact_size(vec2(16.0, 16.0)), text),
         None => egui::Button::new(text),
     };
-    ui.add(b.fill(BLUE).corner_radius(CornerRadius::same(12)).min_size(vec2(ui.available_width(), 50.0)))
+    let r = ui.add(b.fill(BLUE).corner_radius(CornerRadius::same(12)).min_size(vec2(ui.available_width(), 50.0)));
+    hover_overlay(ui, &r, 12, Color32::from_white_alpha(28));
+    r
+}
+
+/// Aclara u oscurece un botón con color propio al pasar el ratón (egui no lo hace si tiene relleno fijo).
+fn hover_overlay(ui: &egui::Ui, r: &egui::Response, radius: u8, color: Color32) {
+    let k = ui.ctx().animate_bool_with_time(r.id.with("hover"), r.hovered(), 0.12);
+    if k > 0.0 {
+        ui.painter().rect_filled(r.rect, CornerRadius::same(radius), color.gamma_multiply(k));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
 }
 
 fn steps(ui: &mut egui::Ui, current: usize, total: usize) {
@@ -1268,7 +1331,11 @@ fn segmented<T: PartialEq + Copy>(ui: &mut egui::Ui, options: &[(&str, T)], curr
                 .stroke(Stroke::new(1.0, if selected { BLUE } else { LINE }))
                 .corner_radius(CornerRadius::same(10))
                 .min_size(vec2(w, 38.0));
-            if ui.add(b).clicked() {
+            let r = ui.add(b);
+            if !selected {
+                hover_overlay(ui, &r, 10, Color32::from_rgba_unmultiplied(0x24, 0x47, 0xE0, 22));
+            }
+            if r.clicked() {
                 picked = Some(*value);
             }
         }
