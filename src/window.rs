@@ -67,6 +67,20 @@ mod imp {
         resize(&cc.egui_ctx, crate::app::WINDOW);
     }
 
+    /// Mueve la ventana (posición en puntos de egui, esquina superior izquierda).
+    pub fn move_to(ctx: &eframe::egui::Context, pos: eframe::egui::Pos2) {
+        let hwnd = HWND_VALUE.load(std::sync::atomic::Ordering::Relaxed);
+        if hwnd == 0 {
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::OuterPosition(pos));
+            return;
+        }
+        let ppp = ctx.pixels_per_point();
+        // SAFETY: la ventana sigue viva mientras la app se ejecuta.
+        unsafe {
+            SetWindowPos(hwnd as HWND, std::ptr::null_mut(), (pos.x * ppp).round() as i32, (pos.y * ppp).round() as i32, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+
     /// Cambia el tamaño de la ventana directamente con Windows. Pasar por winit no sirve:
     /// le sumaría el marco nativo que hemos quitado y lo volvería a pintar.
     pub fn resize(ctx: &eframe::egui::Context, size: eframe::egui::Vec2) {
@@ -87,10 +101,15 @@ mod imp {
 }
 
 #[cfg(windows)]
-pub use imp::{init, resize};
+pub use imp::{init, move_to, resize};
 
 #[cfg(not(windows))]
 pub fn init(_cc: &eframe::CreationContext<'_>) {}
+
+#[cfg(not(windows))]
+pub fn move_to(ctx: &eframe::egui::Context, pos: eframe::egui::Pos2) {
+    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::OuterPosition(pos));
+}
 
 #[cfg(not(windows))]
 pub fn resize(ctx: &eframe::egui::Context, size: eframe::egui::Vec2) {

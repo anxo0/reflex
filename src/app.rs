@@ -82,6 +82,9 @@ pub struct ReflexApp {
     /// Alto del móvil (vertical) que dejó el usuario; se recuerda entre sesiones.
     mirror_height: f32,
     resize_accum: Vec2,
+    /// Dónde estaba la ventana principal antes de duplicar, para volver ahí.
+    home_pos: Option<egui::Pos2>,
+    mirror_pos: Option<egui::Pos2>,
     opts: Options,
     pair_code: String,
     manual: bool,
@@ -123,6 +126,8 @@ impl ReflexApp {
             expected_aspect: 9.0 / 20.0,
             mirror_height: load_mirror_height(),
             resize_accum: Vec2::ZERO,
+            home_pos: None,
+            mirror_pos: None,
             opts: Options::default(),
             pair_code: String::new(),
             manual: false,
@@ -239,6 +244,14 @@ impl ReflexApp {
         self.expected_aspect = aspect;
         self.mirror_aspect = aspect;
         crate::window::resize(ctx, mirror_window_size(self.mirror_height, aspect));
+        self.home_pos = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min);
+        if let (Some(x), Some(y)) = (read_mirror_pref("pos_x"), read_mirror_pref("pos_y")) {
+            // Solo si sigue dentro de la pantalla (puede que hayas cambiado de monitor).
+            let monitor = ctx.input(|i| i.viewport().monitor_size).unwrap_or(vec2(1920.0, 1080.0));
+            if x > -200.0 && y > -50.0 && x < monitor.x - 100.0 && y < monitor.y - 100.0 {
+                crate::window::move_to(ctx, pos2(x, y));
+            }
+        }
     }
 
     fn stop_session(&mut self, ctx: &egui::Context) {
@@ -256,6 +269,14 @@ impl ReflexApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
         }
         if had {
+            // Recuerda dónde dejaste el móvil y devuelve la ventana principal a su sitio.
+            if let Some(r) = ctx.input(|i| i.viewport().outer_rect) {
+                write_mirror_pref("pos_x", format!("{:.0}", r.min.x));
+                write_mirror_pref("pos_y", format!("{:.0}", r.min.y));
+            }
+            if let Some(p) = self.home_pos.take() {
+                crate::window::move_to(ctx, p);
+            }
             crate::window::resize(ctx, WINDOW);
         }
     }
@@ -915,6 +936,7 @@ impl ReflexApp {
         }
 
         let area = ui.max_rect();
+        self.mirror_pos = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min);
         let status = session.status();
         let video_size = *session.shared.video_size.lock().unwrap();
         let (vw, vh) = match (video_size, &self.texture) {
@@ -1526,6 +1548,11 @@ impl eframe::App for ReflexApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(s) = self.session.take() {
+            // Si cierras la app mientras duplicas, también se recuerda dónde estaba el móvil.
+            if let Some(p) = self.mirror_pos {
+                write_mirror_pref("pos_x", format!("{:.0}", p.x));
+                write_mirror_pref("pos_y", format!("{:.0}", p.y));
+            }
             s.stop();
         }
     }
