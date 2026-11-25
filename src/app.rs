@@ -935,7 +935,22 @@ impl ReflexApp {
                 ui.label(RichText::new(t("Para recibir la pantalla del móvil, Windows necesita «Pantalla inalámbrica». Es gratis y de Microsoft. Solo se instala una vez.", "To receive your phone's screen, Windows needs “Wireless Display”. It is free, from Microsoft, and installs once.")).color(muted()));
                 ui.add_space(14.0);
                 let installing = self.feature_installing.load(Ordering::SeqCst);
-                if !installing && crate::miracast::installed_needs_restart() {
+                if !installing && crate::miracast::installed_but_unsupported() {
+                    card(ice_soft(), None).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(t("Instalado, pero Windows dice que este PC no puede recibir", "Installed, but Windows says this PC cannot receive")).strong().color(accent()));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(t("Suele ser el Wi-Fi: tiene que estar encendido (aunque uses cable para internet) y su controlador debe admitir recibir Miracast. Abre «Proyectar en este PC»: si Windows dice ahí que no se puede, este PC no podrá recibir «Enviar pantalla». Usa «Sin cable» o «Con cable», o la app Reflex para Android cuando salga.", "It is usually the Wi-Fi: it must be on (even if you use a cable for internet) and its driver must support receiving Miracast. Open “Projecting to this PC”: if Windows says it is not possible there, this PC cannot receive screen cast. Use Wireless or With cable, or the Reflex Android app when it is out.")).size(13.0).color(ink()));
+                    });
+                    ui.add_space(8.0);
+                    if primary_button(ui, t("Abrir «Proyectar en este PC»", "Open “Projecting to this PC”"), None).clicked() {
+                        crate::miracast::open_projection_settings();
+                    }
+                    ui.add_space(6.0);
+                    if ui.add(egui::Button::new(RichText::new(t("Probar otra vez", "Try again")).size(13.0).color(accent())).frame(false)).clicked() {
+                        retry = true;
+                    }
+                } else if !installing && crate::miracast::installed_needs_restart() {
                     card(ice_soft(), None).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(RichText::new(t("Ya está instalado: falta reiniciar el PC", "Already installed: restart the PC")).strong().color(accent()));
@@ -1828,7 +1843,10 @@ fn apply_theme(ctx: &egui::Context, dark: bool) {
     v.widgets.hovered.weak_bg_fill = ice_soft();
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, pick(ICE, Color32::from_rgb(0x3A, 0x47, 0x7A)));
     v.widgets.active.weak_bg_fill = ice_soft();
-    ctx.set_visuals(v);
+    // Los mismos colores para los dos temas de egui: si eframe cambia de tema por su cuenta
+    // (sigue al sistema), se siguen viendo los que eligió el usuario.
+    ctx.set_visuals_of(egui::Theme::Light, v.clone());
+    ctx.set_visuals_of(egui::Theme::Dark, v);
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = vec2(8.0, 6.0);
         s.spacing.button_padding = vec2(12.0, 8.0);

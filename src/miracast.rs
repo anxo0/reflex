@@ -126,7 +126,37 @@ fn installed_marker() -> std::path::PathBuf {
 /// Ya se instaló desde Reflex en este arranque de Windows o antes: si aún no funciona,
 /// lo que falta es reiniciar el PC.
 pub fn installed_needs_restart() -> bool {
-    installed_marker().exists()
+    installed_marker().exists() && !restarted_since_install()
+}
+
+/// Se instaló y ya se ha reiniciado, pero Windows sigue sin dejar recibir: el problema
+/// es el Wi-Fi del PC o su controlador, no la instalación.
+pub fn installed_but_unsupported() -> bool {
+    installed_marker().exists() && restarted_since_install()
+}
+
+fn restarted_since_install() -> bool {
+    let Ok(installed) = std::fs::metadata(installed_marker()).and_then(|m| m.modified()) else { return false };
+    #[cfg(windows)]
+    {
+        // SAFETY: función sin parámetros que devuelve los milisegundos desde que arrancó Windows.
+        let up = std::time::Duration::from_millis(unsafe { windows::Win32::System::SystemInformation::GetTickCount64() });
+        let boot = std::time::SystemTime::now() - up;
+        installed < boot
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = installed;
+        false
+    }
+}
+
+/// Abre «Proyectar en este PC» en Configuración de Windows.
+pub fn open_projection_settings() {
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("explorer.exe").arg("ms-settings:project").spawn();
+    }
 }
 
 /// Abre los ajustes de Windows donde se instala «Pantalla inalámbrica».
