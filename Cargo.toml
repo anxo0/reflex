@@ -17,19 +17,27 @@ name = "ReflexMirror"
 path = "src/main.rs"
 
 [dependencies]
+aes = "0.9"
 anyhow = "1"
 sys-locale = "0.3"
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 cpal = "0.18"
+ctr = "0.10"
 dirs = "6"
+ed25519-dalek = "3"
 eframe = { version = "0.37", features = ["glow"] }
 egui_extras = { version = "0.37", features = ["svg", "image"] }
+getrandom = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
+mdns-sd = "0.22"
 mp4 = "0.14"
 openh264 = "0.9"
+openh264-sys2 = "0.9"
+plist = "1"
 sha2 = "0.10"
 ureq = "3"
+x25519-dalek = { version = "3", features = ["static_secrets"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]

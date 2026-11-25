@@ -49,7 +49,8 @@ fn drain(mut s: TcpStream) -> Result<()> {
     Ok(())
 }
 
-struct Player {
+/// Salida de audio del PC con un pequeño búfer y remuestreo lineal.
+pub struct Player {
     _stream: cpal::Stream,
     buf: Arc<Mutex<VecDeque<f32>>>,
     out_rate: f64,
@@ -61,7 +62,7 @@ struct Player {
 }
 
 impl Player {
-    fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or_else(|| anyhow!("no hay salida de audio en el PC"))?;
         let supported = device.default_output_config().context("no se pudo leer la configuración de audio")?;
@@ -94,12 +95,17 @@ impl Player {
     }
 
     fn push_s16le(&mut self, pcm: &[u8]) {
-        let mut out = Vec::with_capacity(pcm.len());
-        let step = IN_RATE / self.out_rate;
-        for frame in pcm.as_chunks::<4>().0 {
-            let l = i16::from_le_bytes([frame[0], frame[1]]) as f32 / 32768.0;
-            let r = i16::from_le_bytes([frame[2], frame[3]]) as f32 / 32768.0;
-            if (self.out_rate - IN_RATE).abs() < 1.0 {
+        let samples: Vec<f32> = pcm.as_chunks::<2>().0.iter().map(|b| f32::from(i16::from_le_bytes(*b)) / 32768.0).collect();
+        self.push_stereo(&samples, IN_RATE);
+    }
+
+    /// Añade muestras estéreo intercaladas en [-1, 1] a `in_rate` Hz.
+    pub fn push_stereo(&mut self, samples: &[f32], in_rate: f64) {
+        let mut out = Vec::with_capacity(samples.len());
+        let step = in_rate / self.out_rate;
+        for frame in samples.as_chunks::<2>().0 {
+            let (l, r) = (frame[0], frame[1]);
+            if (self.out_rate - in_rate).abs() < 1.0 {
                 emit(&mut out, self.out_channels, l, r);
             } else {
                 while self.t <= 1.0 {

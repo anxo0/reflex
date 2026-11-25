@@ -67,6 +67,9 @@ pub struct Shared {
     pub fps: Mutex<f32>,
     /// La imagen es negra: el móvil tiene la pantalla apagada.
     pub screen_dark: AtomicBool,
+    /// Último fotograma que la interfaz ya ha subido a la GPU (`u64::MAX`: no hay
+    /// interfaz pintando, así que no se salta ninguno).
+    pub shown_seq: std::sync::atomic::AtomicU64,
     pub stop: AtomicBool,
     sockets: Mutex<Vec<TcpStream>>,
 }
@@ -104,6 +107,7 @@ impl Shared {
             notices: Mutex::new(Vec::new()),
             fps: Mutex::new(0.0),
             screen_dark: AtomicBool::new(false),
+            shown_seq: std::sync::atomic::AtomicU64::new(u64::MAX),
             stop: AtomicBool::new(false),
             sockets: Mutex::new(Vec::new()),
         }
