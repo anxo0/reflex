@@ -81,6 +81,7 @@ pub struct ReflexApp {
     expected_aspect: f32,
     /// Alto del móvil (vertical) que dejó el usuario; se recuerda entre sesiones.
     mirror_height: f32,
+    resize_accum: Vec2,
     opts: Options,
     pair_code: String,
     manual: bool,
@@ -121,6 +122,7 @@ impl ReflexApp {
             mirror_aspect: 9.0 / 20.0,
             expected_aspect: 9.0 / 20.0,
             mirror_height: load_mirror_height(),
+            resize_accum: Vec2::ZERO,
             opts: Options::default(),
             pair_code: String::new(),
             manual: false,
@@ -875,6 +877,13 @@ impl ReflexApp {
 
     /// Agranda o encoge el móvil en diagonal, manteniendo su forma.
     fn resize_mirror(&mut self, ctx: &egui::Context, d: Vec2) {
+        // Se acumula el arrastre y solo se redimensiona a saltos de 4 px: menos cambios de
+        // tamaño por segundo, sin parpadeo.
+        self.resize_accum += d;
+        if self.resize_accum.length() < 4.0 {
+            return;
+        }
+        let d = std::mem::take(&mut self.resize_accum);
         let Some(inner) = ctx.input(|i| i.viewport().inner_rect) else { return };
         let aspect = self.mirror_aspect;
         let screen_w = |h: f32| (h - 2.0 * BEZEL) * aspect + 2.0 * BEZEL;

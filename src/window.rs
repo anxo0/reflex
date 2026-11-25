@@ -12,7 +12,7 @@ mod imp {
     use windows_sys::Win32::UI::Controls::MARGINS;
     use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
+        GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE, SWP_NOREDRAW, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
         WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCPAINT, WM_SETICON, WM_SETTEXT, WS_VISIBLE,
     };
 
@@ -79,7 +79,9 @@ mod imp {
         let (w, h) = ((size.x * ppp).round() as i32, (size.y * ppp).round() as i32);
         // SAFETY: la ventana sigue viva mientras la app se ejecuta.
         unsafe {
-            SetWindowPos(hwnd as HWND, std::ptr::null_mut(), 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            // Sin copiar ni borrar el contenido antiguo: el siguiente fotograma lo pinta todo.
+            // Así no parpadea mientras se arrastra.
+            SetWindowPos(hwnd as HWND, std::ptr::null_mut(), 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
         }
     }
 }
