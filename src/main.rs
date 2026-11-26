@@ -5,6 +5,7 @@ mod adb;
 mod android;
 mod app;
 mod audio;
+mod companion;
 mod h264;
 mod i18n;
 mod iphone;

@@ -94,7 +94,7 @@ impl Player {
         })
     }
 
-    fn push_s16le(&mut self, pcm: &[u8]) {
+    pub fn push_s16le(&mut self, pcm: &[u8]) {
         let samples: Vec<f32> = pcm.as_chunks::<2>().0.iter().map(|b| f32::from(i16::from_le_bytes(*b)) / 32768.0).collect();
         self.push_stereo(&samples, IN_RATE);
     }

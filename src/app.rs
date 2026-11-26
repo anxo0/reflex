@@ -90,6 +90,13 @@ enum Screen {
     Settings,
 }
 
+/// Las dos formas de «Desde el móvil».
+#[derive(Clone, Copy, PartialEq)]
+enum CastTab {
+    App,
+    Miracast,
+}
+
 #[derive(Clone, PartialEq)]
 enum WifiStage {
     Idle,
@@ -129,6 +136,15 @@ pub struct ReflexApp {
     /// La ventana está en modo móvil porque el iPhone está duplicando. Comparte con
     /// «Enviar pantalla» la vista de solo ver (`cast_texture`, `cast_seq`).
     ios_live: bool,
+    /// Receptor de la app Reflex para Android, junto a Miracast en «Desde el móvil».
+    app_rx: Option<crate::companion::Receiver>,
+    /// La ventana es el móvil que envía con la app.
+    app_live: bool,
+    /// QR que se enseña en «Desde el móvil» (texto y textura).
+    app_qr: Option<(String, egui::TextureHandle)>,
+    cast_tab: CastTab,
+    /// Hay un dedo «puesto» en la pantalla del móvil controlado con la app.
+    app_touching: bool,
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
     sized_for: (u32, u32),
@@ -188,6 +204,11 @@ impl ReflexApp {
             cast_retry_at: None,
             airplay: None,
             ios_live: false,
+            app_rx: None,
+            app_live: false,
+            app_qr: None,
+            cast_tab: CastTab::App,
+            app_touching: false,
             texture: None,
             last_seq: 0,
             sized_for: (0, 0),
@@ -443,6 +464,10 @@ impl ReflexApp {
         if self.cast.is_none() {
             self.cast = Some(crate::miracast::Receiver::start(ctx.clone()));
         }
+        if self.app_rx.is_none() {
+            self.app_rx = Some(crate::companion::Receiver::start(ctx.clone()));
+            self.app_qr = None;
+        }
     }
 
     /// Deja de recibir y vuelve al inicio.
@@ -453,7 +478,36 @@ impl ReflexApp {
         if let Some(c) = self.cast.take() {
             c.stop();
         }
+        if self.app_live {
+            self.leave_app_window(ctx);
+        }
+        if let Some(r) = self.app_rx.take() {
+            r.stop();
+        }
         self.screen = Screen::Home;
+    }
+
+    /// La app Reflex ha empezado a enviar: la ventana pasa a ser el móvil.
+    fn enter_app_window(&mut self, ctx: &egui::Context) {
+        self.app_live = true;
+        self.app_touching = false;
+        let aspect = self.app_rx.as_ref().map(|r| *r.shared.video_size.lock().unwrap()).filter(|(w, h)| *w > 0 && *h > 0).map_or(9.0 / 20.0, |(w, h)| w as f32 / h as f32);
+        self.enter_view_window(ctx, aspect);
+    }
+
+    fn leave_app_window(&mut self, ctx: &egui::Context) {
+        self.app_live = false;
+        self.leave_view_window(ctx);
+    }
+
+    /// Corta el móvil de la app y vuelve a «Desde el móvil», que sigue esperando.
+    fn disconnect_app(&mut self, ctx: &egui::Context) {
+        if let Some(r) = &self.app_rx {
+            r.disconnect();
+        }
+        if self.app_live {
+            self.leave_app_window(ctx);
+        }
     }
 
     /// Un móvil ha empezado a enviar: la ventana pasa a ser el móvil.
@@ -573,6 +627,7 @@ impl ReflexApp {
         match (&self.session, &self.airplay) {
             (Some(s), _) => Some(s.shared.clone()),
             (None, Some(r)) if self.ios_live => Some(r.shared.clone()),
+            _ if self.app_live => self.app_rx.as_ref().map(|r| r.shared.clone()),
             _ => None,
         }
     }
@@ -612,6 +667,8 @@ impl ReflexApp {
             if let Some(s) = &self.session {
                 s.send(ControlMsg::ResetVideo);
                 self.toast("Grabando. Pulsa otra vez para parar");
+            } else if self.app_live {
+                self.toast(t("Grabación preparada: empieza en un par de segundos", "Recording armed: it starts in a couple of seconds"));
             } else {
                 // AirPlay no deja pedir un fotograma clave: se empieza con el siguiente.
                 self.toast(t(
@@ -708,7 +765,7 @@ impl ReflexApp {
         let mut forget: Option<(String, Option<String>)> = None;
         let mut reconnect = None;
         let offline: Vec<SavedPhone> = self.saved_phones.iter().filter(|p| !devices.iter().any(|d| d.label() == p.model)).cloned().collect();
-        let max_list = (ui.available_height() - 330.0).max(160.0);
+        let max_list = (ui.available_height() - 440.0).max(120.0);
         egui::ScrollArea::vertical().max_height(max_list).auto_shrink([false, true]).show(ui, |ui| {
             ui.set_width(ui.available_width() - 8.0);
             for d in devices.iter().filter(|d| d.state == "device") {
@@ -820,9 +877,9 @@ impl ReflexApp {
             ui.add_space(6.0);
         }
 
+        // Opciones para añadir un móvil, repartidas por sistema: Android e iPhone.
         ui.add_space(8.0);
-        ui.label(RichText::new(if devices.iter().any(|d| d.state == "device") || !self.saved_phones.is_empty() { t("AÑADIR UN MÓVIL", "ADD A PHONE") } else { t("CONECTA TU MÓVIL", "CONNECT YOUR PHONE") }).size(11.0).strong().color(muted()));
-        ui.add_space(6.0);
+        section(ui, "ANDROID");
         if option_card(ui, icon!("wifi"), t("Sin cable", "Wireless"), t("Ver y controlar por Wi-Fi", "View and control over Wi-Fi")).clicked() {
             self.screen = Screen::Wifi;
             self.mdns_active.store(true, Ordering::Relaxed);
@@ -834,12 +891,13 @@ impl ReflexApp {
             self.screen = Screen::Usb;
         }
         ui.add_space(8.0);
-        if option_card(ui, icon!("cast"), t("Desde el móvil", "From the phone"), t("Envía la pantalla desde el móvil. Solo ver", "Cast the screen from the phone. View only")).clicked() {
+        if option_card(ui, icon!("cast"), t("Desde el móvil", "From the phone"), t("Con la app Reflex o «Enviar pantalla»", "With the Reflex app or “Cast”")).clicked() {
             self.screen = Screen::Cast;
             self.start_cast(ctx);
         }
-        ui.add_space(8.0);
-        if option_card(ui, icon!("tablet"), "iPhone / iPad", t("Por AirPlay, con imagen y sonido. Solo ver", "Over AirPlay, with picture and sound. View only")).clicked() {
+        ui.add_space(14.0);
+        section(ui, "IPHONE / IPAD");
+        if option_card(ui, icon!("tablet"), t("Duplicar pantalla", "Screen Mirroring"), t("Por AirPlay, con imagen y sonido. Solo ver", "Over AirPlay, with picture and sound. View only")).clicked() {
             self.screen = Screen::Iphone;
             self.start_airplay(ctx);
         }
@@ -993,9 +1051,18 @@ impl ReflexApp {
         }
     }
 
-    fn cast_view(&mut self, ui: &mut egui::Ui) {
+    fn cast_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.header(ui, Some(t("Desde el móvil", "From the phone")));
+        ui.add_space(12.0);
+        let tabs = [(t("App Reflex", "Reflex app"), CastTab::App), (t("Enviar pantalla", "Screen cast"), CastTab::Miracast)];
+        if let Some(v) = segmented(ui, &tabs, &self.cast_tab) {
+            self.cast_tab = v;
+        }
         ui.add_space(16.0);
+        if self.cast_tab == CastTab::App {
+            self.app_cast_view(ui, ctx);
+            return;
+        }
         let status = self.cast.as_ref().map(|c| c.status()).unwrap_or(crate::miracast::CastStatus::Starting);
         let mut retry = false;
         match &status {
@@ -1010,7 +1077,7 @@ impl ReflexApp {
                         ui.set_width(ui.available_width());
                         ui.label(RichText::new(t("Instalado, pero Windows dice que este PC no puede recibir", "Installed, but Windows says this PC cannot receive")).strong().color(accent()));
                         ui.add_space(4.0);
-                        ui.label(RichText::new(t("Suele ser el Wi-Fi: tiene que estar encendido (aunque uses cable para internet) y su controlador debe admitir recibir Miracast. Abre «Proyectar en este PC»: si Windows dice ahí que no se puede, este PC no podrá recibir «Enviar pantalla». Usa «Sin cable» o «Con cable», o la app Reflex para Android cuando salga.", "It is usually the Wi-Fi: it must be on (even if you use a cable for internet) and its driver must support receiving Miracast. Open “Projecting to this PC”: if Windows says it is not possible there, this PC cannot receive screen cast. Use Wireless or With cable, or the Reflex Android app when it is out.")).size(13.0).color(ink()));
+                        ui.label(RichText::new(t("Suele ser el Wi-Fi: tiene que estar encendido (aunque uses cable para internet) y su controlador debe admitir recibir Miracast. Abre «Proyectar en este PC»: si Windows dice ahí que no se puede, este PC no podrá recibir «Enviar pantalla». Usa «Sin cable» o «Con cable», o la app Reflex.", "It is usually the Wi-Fi: it must be on (even if you use a cable for internet) and its driver must support receiving Miracast. Open “Projecting to this PC”: if Windows says it is not possible there, this PC cannot receive screen cast. Use Wireless or With cable, or the Reflex app.")).size(13.0).color(ink()));
                     });
                     ui.add_space(8.0);
                     if primary_button(ui, t("Abrir «Proyectar en este PC»", "Open “Projecting to this PC”"), None).clicked() {
@@ -1087,7 +1154,7 @@ impl ReflexApp {
             crate::miracast::CastStatus::NoWifi => {
                 ui.label(RichText::new(t("Este PC no tiene Wi-Fi", "This PC has no Wi-Fi")).size(24.0).strong().color(ink()));
                 ui.add_space(8.0);
-                ui.label(RichText::new(t("«Enviar pantalla» necesita una tarjeta Wi-Fi en el PC, y este no tiene. Puedes duplicar el móvil con «Sin cable» o «Con cable», o con la app Reflex para Android cuando salga.", "Screen cast needs a Wi-Fi card in the PC, and this one has none. You can mirror the phone with Wireless or With cable, or with the Reflex Android app when it is out.")).color(muted()));
+                ui.label(RichText::new(t("«Enviar pantalla» necesita una tarjeta Wi-Fi en el PC, y este no tiene. Puedes duplicar el móvil con «Sin cable» o «Con cable», o con la app Reflex.", "Screen cast needs a Wi-Fi card in the PC, and this one has none. You can mirror the phone with Wireless or With cable, or with the Reflex app.")).color(muted()));
             }
             crate::miracast::CastStatus::Failed(e) => {
                 ui.label(RichText::new(t("No se puede recibir ahora", "Cannot receive right now")).size(24.0).strong().color(ink()));
@@ -1125,7 +1192,7 @@ impl ReflexApp {
                 ui.add_space(12.0);
                 card(ice_soft(), None).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new(t("¿Tu móvil no tiene «Enviar pantalla»? Algunos, como los Pixel, no lo traen. Pronto podrás usar la app Reflex para Android.", "Your phone has no screen cast? Some, like Pixel, do not. Soon you will be able to use the Reflex app for Android.")).size(12.0).color(accent()));
+                    ui.label(RichText::new(t("¿Tu móvil no tiene «Enviar pantalla»? Algunos, como los Pixel, no lo traen: usa la pestaña «App Reflex».", "Your phone has no screen cast? Some, like Pixel, do not: use the “Reflex app” tab.")).size(12.0).color(accent()));
                 });
             }
         }
@@ -1135,6 +1202,106 @@ impl ReflexApp {
             }
             self.start_cast(ui.ctx());
         }
+    }
+
+    /// «Desde el móvil» con la app Reflex: QR y código para que el móvil encuentre el PC.
+    fn app_cast_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(r) = &self.app_rx else { return };
+        let state = r.state();
+        let code = r.code.clone();
+        let pc = r.name.clone();
+        let qr_text = r.qr_text();
+        if let crate::companion::State::Failed(e) = &state {
+            ui.label(RichText::new(t("No se puede recibir ahora", "Cannot receive right now")).size(24.0).strong().color(ink()));
+            ui.add_space(8.0);
+            ui.label(RichText::new(e).color(err_col()));
+            ui.add_space(14.0);
+            if primary_button(ui, t("Reintentar", "Try again"), None).clicked() {
+                if let Some(r) = self.app_rx.take() {
+                    r.stop();
+                }
+                self.start_cast(ctx);
+            }
+            return;
+        }
+        ui.label(RichText::new(t("Envía la pantalla con la app", "Cast with the app")).size(24.0).strong().color(ink()));
+        ui.add_space(8.0);
+        ui.label(RichText::new(t("Imagen y sonido, y si le das permiso, control desde el PC. Funciona con cualquier Android 8 o superior en la misma red.", "Picture and sound, and with your permission, control from the PC. Works with any Android 8 or newer on the same network.")).color(muted()));
+        ui.add_space(14.0);
+
+        // El QR se rehace si cambia (por ejemplo, otra IP).
+        if let Some(text) = &qr_text
+            && self.app_qr.as_ref().is_none_or(|(t, _)| t != text)
+            && let Some(img) = crate::companion::qr_image(text)
+        {
+            self.app_qr = Some((text.clone(), ctx.load_texture("qr_app", img, egui::TextureOptions::NEAREST)));
+        }
+        card(raised(), Some(line())).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                match &self.app_qr {
+                    Some((_, tex)) => {
+                        ui.add(egui::Image::from_texture((tex.id(), tex.size_vec2())).fit_to_exact_size(vec2(132.0, 132.0)).corner_radius(CornerRadius::same(8)));
+                    }
+                    None => {
+                        ui.add_sized(vec2(132.0, 132.0), egui::Spinner::new().size(24.0).color(BLUE_BRIGHT));
+                    }
+                }
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(t("CÓDIGO", "CODE")).size(11.0).strong().color(muted()));
+                    ui.label(RichText::new(&code).size(38.0).strong().monospace().color(ink()));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("{} {pc}", t("Este PC aparece como", "This PC shows up as"))).size(12.0).color(muted()));
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(14.0).color(BLUE_BRIGHT));
+                        let msg = if matches!(state, crate::companion::State::Starting) { t("Preparando…", "Getting ready…") } else { t("Esperando a tu móvil…", "Waiting for your phone…") };
+                        ui.label(RichText::new(msg).size(12.0).strong().color(ink()));
+                    });
+                });
+            });
+        });
+        ui.add_space(14.0);
+        numbered(ui, 1, t("Instala la app Reflex en el móvil (abajo tienes el enlace).", "Install the Reflex app on the phone (link below)."));
+        numbered(ui, 2, t("Ábrela y elige este PC en la lista, o escanea el QR, o escribe el código.", "Open it and pick this PC from the list, scan the QR, or type the code."));
+        numbered(ui, 3, t("Acepta en el móvil el aviso para empezar a grabar la pantalla.", "Accept the screen capture prompt on the phone."));
+        ui.add_space(10.0);
+        card(ice_soft(), None).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(t("¿No tienes la app?", "Don't have the app?")).size(12.0).color(accent()));
+                if ui.add(egui::Button::new(RichText::new(t("Descárgala de GitHub", "Get it from GitHub")).size(12.0).strong().color(accent()).underline()).frame(false)).clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab(APP_DOWNLOAD_URL));
+                }
+            });
+        });
+
+        // Un móvil que no trae el código pide permiso.
+        if let crate::companion::State::Asking(phone) = &state {
+            let mut answer = None;
+            let frame = egui::Frame::new().fill(raised()).stroke(Stroke::new(1.0, line())).corner_radius(CornerRadius::same(18)).inner_margin(Margin::same(20));
+            egui::Modal::new(egui::Id::unique("aceptar_app")).frame(frame).backdrop_color(Color32::from_black_alpha(110)).show(ctx, |ui| {
+                ui.set_width(300.0);
+                ui.label(RichText::new(format!("{} «{phone}» {}", t("¿Dejar que", "Let"), t("envíe su pantalla?", "send its screen?"))).size(16.0).strong().color(ink()));
+                ui.add_space(6.0);
+                ui.label(RichText::new(t("Solo acepta si es tu móvil. No te lo volverá a preguntar.", "Only accept if it is your phone. You won't be asked again.")).size(13.0).color(muted()));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if primary_button(ui, t("Aceptar", "Accept"), None).clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.add(egui::Button::new(RichText::new(t("Rechazar", "Reject")).color(accent())).frame(false)).clicked() {
+                        answer = Some(false);
+                    }
+                });
+            });
+            if let (Some(a), Some(r)) = (answer, &self.app_rx) {
+                r.answer(a);
+            }
+        }
+        ctx.request_repaint_after(Duration::from_millis(400));
     }
 
     fn iphone_view(&mut self, ui: &mut egui::Ui) {
@@ -1208,6 +1375,9 @@ impl ReflexApp {
         let (image, dark) = if self.ios_live {
             let Some(shared) = self.airplay.as_ref().map(|r| r.shared.clone()) else { return };
             (take_new_frame(&shared.frame, &mut self.cast_seq, Some(&shared.shown_seq)), shared.screen_dark.load(Ordering::Relaxed))
+        } else if self.app_live {
+            let Some(shared) = self.app_rx.as_ref().map(|r| r.shared.clone()) else { return };
+            (take_new_frame(&shared.frame, &mut self.cast_seq, Some(&shared.shown_seq)), shared.screen_dark.load(Ordering::Relaxed))
         } else {
             let Some(shared) = self.cast.as_ref().map(|c| c.shared.clone()) else { return };
             (take_new_frame(&shared.frame, &mut self.cast_seq, None), shared.screen_dark.load(Ordering::Relaxed))
@@ -1257,6 +1427,33 @@ impl ReflexApp {
         }
         if drag.double_clicked() {
             self.toggle_fullscreen(ctx);
+        }
+        let app_control = self.app_live && self.app_rx.as_ref().is_some_and(|r| r.control.load(Ordering::Relaxed));
+        if app_control && self.cast_texture.is_some() {
+            let touch = ui.interact(screen, ui.scope_id().with("toque_app"), Sense::click_and_drag());
+            let norm = |p: egui::Pos2| ((p.x - screen.min.x) / screen.width(), (p.y - screen.min.y) / screen.height());
+            if let Some(r) = &self.app_rx {
+                let pos = touch.interact_pointer_pos().or_else(|| ctx.input(|i| i.pointer.latest_pos()));
+                let down = touch.is_pointer_button_down_on() && ctx.input(|i| i.pointer.primary_down());
+                if let Some(p) = pos {
+                    let (x, y) = norm(p);
+                    if down && !self.app_touching {
+                        r.touch(crate::companion::Touch::Down, x, y);
+                        self.app_touching = true;
+                    } else if down && touch.dragged() {
+                        r.touch(crate::companion::Touch::Move, x, y);
+                    } else if !down && self.app_touching {
+                        r.touch(crate::companion::Touch::Up, x, y);
+                        self.app_touching = false;
+                    }
+                }
+                if touch.secondary_clicked() {
+                    r.key(crate::companion::Key::Back);
+                }
+                if touch.middle_clicked() {
+                    r.key(crate::companion::Key::Home);
+                }
+            }
         }
         let inner_radius = CornerRadius::same((radius - BEZEL).max(4.0) as u8);
         match &self.cast_texture {
@@ -1500,6 +1697,8 @@ impl ReflexApp {
         // Con «Enviar pantalla» y el iPhone solo se ve: no hay botones para manejar el móvil.
         let android = self.session.is_some();
         let ios = !android && self.ios_live;
+        let app = !android && !ios && self.app_live;
+        let app_control = app && self.app_rx.as_ref().is_some_and(|r| r.control.load(Ordering::Relaxed));
         let fg = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("pistas")));
         let hint: std::cell::Cell<Option<(egui::Rect, &'static str)>> = std::cell::Cell::new(None);
 
@@ -1585,7 +1784,30 @@ impl ReflexApp {
                                     self.press(keycode::POWER);
                                 }
                             }
-                            if android || ios {
+                            if app_control {
+                                use crate::companion::Key;
+                                divider(ui);
+                                let mut key = None;
+                                if tool(ui, icon!("back"), DARK_TEXT, t("Atrás (clic derecho)", "Back (right click)")) {
+                                    key = Some(Key::Back);
+                                }
+                                if tool(ui, icon!("home"), DARK_TEXT, t("Inicio (clic central)", "Home (middle click)")) {
+                                    key = Some(Key::Home);
+                                }
+                                if tool(ui, icon!("recents"), DARK_TEXT, t("Apps recientes", "Recent apps")) {
+                                    key = Some(Key::Recents);
+                                }
+                                if tool(ui, icon!("bell"), DARK_TEXT, t("Notificaciones", "Notifications")) {
+                                    key = Some(Key::Notifications);
+                                }
+                                if tool(ui, icon!("power"), DARK_TEXT, t("Bloquear el móvil", "Lock the phone")) {
+                                    key = Some(Key::Lock);
+                                }
+                                if let (Some(k), Some(r)) = (key, &self.app_rx) {
+                                    r.key(k);
+                                }
+                            }
+                            if android || ios || app {
                                 divider(ui);
                                 if tool(ui, icon!("camera"), DARK_TEXT, t("Hacer captura", "Take a screenshot")) {
                                     self.screenshot();
@@ -1608,6 +1830,8 @@ impl ReflexApp {
                                     self.stop_session(ctx);
                                 } else if ios {
                                     self.stop_airplay(ctx);
+                                } else if app {
+                                    self.disconnect_app(ctx);
                                 } else {
                                     self.stop_cast(ctx);
                                 }
@@ -1903,6 +2127,9 @@ struct SavedPhone {
 }
 
 /// Una línea por móvil: modelo, tabulador e IP.
+/// Donde se descarga la app Reflex para Android.
+const APP_DOWNLOAD_URL: &str = "https://github.com/anxo0/reflex/releases/latest";
+
 const SEP: char = '\u{9}';
 const NL: char = '\u{a}';
 
@@ -2374,10 +2601,26 @@ impl eframe::App for ReflexApp {
         } else if self.cast_live && !cast_connected {
             self.leave_cast_window(&ctx);
         }
-        if self.cast.is_some() && !self.cast_live && self.screen != Screen::Cast {
+        if self.cast.is_some() && !self.cast_live && !self.app_live && self.screen != Screen::Cast {
             if let Some(c) = self.cast.take() {
                 c.stop();
             }
+        }
+
+        // App Reflex para Android: igual, y además puede controlarse.
+        if let Some(r) = &self.app_rx {
+            for n in r.shared.notices.lock().unwrap().drain(..) {
+                self.notice = Some((n, Instant::now()));
+            }
+        }
+        let app_connected = self.app_rx.as_ref().is_some_and(|r| matches!(r.state(), crate::companion::State::Connected(_)));
+        if app_connected && !self.app_live && self.session.is_none() && !self.cast_live && !self.ios_live {
+            self.enter_app_window(&ctx);
+        } else if self.app_live && !app_connected {
+            self.leave_app_window(&ctx);
+        }
+        if !self.app_live && !self.cast_live && self.screen != Screen::Cast && let Some(r) = self.app_rx.take() {
+            r.stop();
         }
 
         // iPhone: igual que «Enviar pantalla». Mientras duplica, la ventana es el iPhone.
@@ -2410,7 +2653,7 @@ impl eframe::App for ReflexApp {
 
         if self.session.is_some() {
             egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(Color32::TRANSPARENT)).show(ui, |ui| self.mirror_view(ui, &ctx));
-        } else if self.cast_live || self.ios_live {
+        } else if self.cast_live || self.ios_live || self.app_live {
             egui::CentralPanel::no_frame().frame(egui::Frame::new().fill(Color32::TRANSPARENT)).show(ui, |ui| self.cast_mirror_view(ui, &ctx));
         } else {
             let notice = self.notice.clone().filter(|(_, at)| at.elapsed() < Duration::from_secs(6));
@@ -2429,7 +2672,7 @@ impl eframe::App for ReflexApp {
                         Screen::Home => self.home_view(ui, &ctx),
                         Screen::Wifi => self.wifi_view(ui, &ctx),
                         Screen::Usb => self.usb_view(ui, &ctx),
-                        Screen::Cast => self.cast_view(ui),
+                        Screen::Cast => self.cast_view(ui, &ctx),
                         Screen::Iphone => self.iphone_view(ui),
                         Screen::Settings => self.settings_view(ui),
                     }
@@ -2468,6 +2711,13 @@ impl eframe::App for ReflexApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(r) = self.app_rx.take() {
+            if self.app_live && let Some(p) = self.mirror_pos {
+                write_mirror_pref("pos_x", format!("{:.0}", p.x));
+                write_mirror_pref("pos_y", format!("{:.0}", p.y));
+            }
+            r.stop();
+        }
         if let Some(r) = self.airplay.take() {
             if self.ios_live && let Some(p) = self.mirror_pos {
                 write_mirror_pref("pos_x", format!("{:.0}", p.x));
