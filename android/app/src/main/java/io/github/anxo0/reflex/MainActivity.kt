@@ -2,6 +2,7 @@ package io.github.anxo0.reflex
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -129,8 +130,30 @@ class MainActivity : ComponentActivity() {
         capture.launch(mpm.createScreenCaptureIntent())
     }
 
+    /** El aviso que explica cómo activar el control (y los ajustes restringidos). */
+    var controlHelp by mutableStateOf(false)
+
     fun openAccessibility() {
-        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        controlHelp = true
+    }
+
+    /** Abre el ajuste de Reflex dentro de Accesibilidad; si el móvil no lo deja, la lista general. */
+    fun openControlSetting() {
+        controlHelp = false
+        val component = ComponentName(this, ControlService::class.java).flattenToString()
+        val direct = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+            .putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+            .putExtra(":settings:fragment_args_key", component)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { startActivity(direct) }.onFailure {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    /** Información de la app, donde está «Permitir ajustes restringidos» (menú ⋮). */
+    fun openAppInfo() {
+        controlHelp = false
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     fun openHelp() {

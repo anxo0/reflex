@@ -1,5 +1,6 @@
 package io.github.anxo0.reflex.ui
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -79,7 +81,33 @@ fun ReflexApp(a: MainActivity) {
             a.page == Page.Settings -> SettingsScreen(a)
             else -> HomeScreen(a)
         }
+        if (a.controlHelp) ControlHelpDialog(a)
     }
+}
+
+/** Cómo activar el control desde el PC, con el paso de los ajustes restringidos. */
+@Composable
+private fun ControlHelpDialog(a: MainActivity) {
+    AlertDialog(
+        onDismissRequest = { a.controlHelp = false },
+        title = { Text(tr("Controlar desde el PC", "Control from the PC")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(tr("Activa «Reflex: control desde el PC» en Accesibilidad y acepta el aviso.", "Turn on “Reflex: control from the PC” in Accessibility and accept the prompt."))
+                if (Build.VERSION.SDK_INT >= 33) {
+                    Text(
+                        tr(
+                            "Si sale en gris («ajuste restringido»): ábrelo una vez para que salga el aviso, luego ve a Información de la app, toca ⋮ arriba a la derecha y elige «Permitir ajustes restringidos». Después vuelve a activarlo.",
+                            "If it is greyed out (“restricted setting”): open it once so the notice appears, then go to App info, tap ⋮ at the top right and pick “Allow restricted settings”. Then turn it on again.",
+                        ),
+                        fontSize = 14.sp, color = cs.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { a.openControlSetting() }) { Text(tr("Abrir Accesibilidad", "Open Accessibility")) } },
+        dismissButton = if (Build.VERSION.SDK_INT >= 33) ({ TextButton(onClick = { a.openAppInfo() }) { Text(tr("Información de la app", "App info")) } }) else null,
+    )
 }
 
 // ---------------------------------------------------------------- piezas
