@@ -25,13 +25,28 @@ pub fn platform_tools_url() -> &'static str {
 }
 
 pub fn data_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("Reflex")
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| portable_dir().unwrap_or_else(|| dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("Reflex")))
+        .clone()
+}
+
+/// Versión portable: con un `portable.txt` junto al ejecutable, todo se guarda al lado,
+/// en `datos\`, y no se toca la carpeta del usuario.
+fn portable_dir() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    dir.join("portable.txt").is_file().then(|| dir.join("datos"))
+}
+
+/// Si es la versión portable (no se instaló).
+pub fn is_portable() -> bool {
+    portable_dir().is_some()
 }
 
 /// Las primeras versiones se llamaban "Reflejo": reutiliza lo ya descargado.
 pub fn migrate_legacy_data() {
+    if is_portable() {
+        return;
+    }
     let Some(base) = dirs::data_local_dir() else { return };
     let old = base.join("Reflejo");
     let new = data_dir();

@@ -1,5 +1,8 @@
 name: CI
 
+# En cada push y PR: compilar y probar. Con un tag v* (por ejemplo v0.1.0) además se
+# publica la versión: instalador y portable de Windows, APK de Android y binarios de
+# Linux y macOS.
 on:
   push:
     branches: [main]
@@ -41,8 +44,80 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
-      - name: Publicar en la release
+
+      # ---- Solo al publicar una versión ----
+      - name: Versión
         if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Portable e instalador de Windows
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dist = "dist"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item target/release/ReflexMirror.exe, LICENSE, README.md, THIRD_PARTY.md $dist
+          # Portable: con portable.txt guarda los datos junto al exe.
+          $port = "portable"
+          Copy-Item -Recurse $dist $port
+          "Reflex portable: los datos se guardan en la carpeta 'datos' de aquí al lado." | Out-File -Encoding utf8 "$port/portable.txt"
+          Compress-Archive "$port/*" "Reflex-$env:VERSION-portable-win-x64.zip"
+          if (Test-Path installer/reflex.iss) {
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+            & $iscc "/DVersion=$env:VERSION" "/DOrigen=$PWD\$dist" "/O$PWD" installer\reflex.iss
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Publicar (Windows)
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: false
+          files: |
+            Reflex-${{ env.VERSION }}-setup.exe
+            Reflex-${{ env.VERSION }}-portable-win-x64.zip
+      - name: Publicar (Linux y macOS)
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os != 'Windows'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.artifact }}
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compilar la APK
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          REFLEX_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          REFLEX_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          REFLEX_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          # Firmada solo si hay clave (en PR de otros repos no llegan los secretos).
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/reflex.jks"
+            export REFLEX_KEYSTORE="$RUNNER_TEMP/reflex.jks"
+            ./gradlew assembleRelease --no-daemon
+            cp app/build/outputs/apk/release/app-release.apk ../Reflex.apk
+          else
+            ./gradlew assembleDebug --no-daemon
+            cp app/build/outputs/apk/debug/app-debug.apk ../Reflex.apk
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Reflex.apk
+          path: Reflex.apk
+      - name: Publicar la APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: mv Reflex.apk "Reflex-${GITHUB_REF_NAME#v}.apk"
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Reflex-*.apk
