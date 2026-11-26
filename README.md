@@ -1,6 +1,14 @@
-# Reflex
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+  <img src="assets/banner-light.svg" alt="Reflex" width="1280">
+</picture>
 
-<img src="assets/icon-256.png" width="96" alt="Reflex icon">
+<p align="center">
+  <b>Download:</b>
+  <a href="https://github.com/anxo0/reflex/releases/latest">Windows installer</a> ·
+  <a href="https://github.com/anxo0/reflex/releases/latest">Windows portable</a> ·
+  <a href="https://github.com/anxo0/reflex/releases/latest">Android app (APK)</a>
+</p>
 
 Mirror and control your phone's screen on your PC. **Free, open source, no time limits**: no accounts, no ads, no watermarks.
 
@@ -9,7 +17,7 @@ Written in Rust. Runs on Windows, Linux and macOS. Available in English and Span
 | Platform | Status |
 |---|---|
 | Android (USB and Wi-Fi) | Available |
-| Android, cast from the phone (Miracast or Reflex app) | Planned |
+| Android, cast from the phone (Miracast or Reflex app) | Beta |
 | iPhone / iPad (AirPlay) | Testing: video and audio, see [docs/IPHONE.md](docs/IPHONE.md) |
 
 ## Features (Android)
