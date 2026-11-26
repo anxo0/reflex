@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Reflex</string>
+    <string name="control_label">Reflex: control from the PC</string>
+    <string name="control_description">Lets the PC where you send your screen tap, swipe and use the back, home and recent apps buttons. It only works while you are sending the screen with Reflex and does not read the content of the screen.</string>
+    <string name="notif_channel">Screen sending</string>
+</resources>

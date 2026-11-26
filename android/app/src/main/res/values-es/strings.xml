@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="control_label">Reflex: control desde el PC</string>
+    <string name="control_description">Deja que el PC al que envías la pantalla toque, deslice y use los botones de atrás, inicio y apps recientes. Solo funciona mientras envías la pantalla con Reflex y no lee lo que hay en pantalla.</string>
+    <string name="notif_channel">Envío de pantalla</string>
+</resources>

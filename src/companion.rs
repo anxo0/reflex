@@ -192,6 +192,11 @@ impl Worker {
         let port = listener.local_addr()?.port();
         *self.port.lock().unwrap() = port;
         let _mdns = Advertiser::start(&self.name, port).map_err(|e| log(format!("App Reflex: sin mDNS ({e:#})"))).ok();
+        // Búsqueda por difusión: para redes que bloquean mDNS (la app la usa con el código).
+        let udp = UdpSocket::bind(("0.0.0.0", PORT)).ok();
+        if let Some(u) = &udp {
+            let _ = u.set_nonblocking(true);
+        }
         log(format!("App Reflex: esperando en el puerto {port}"));
         self.set(State::Waiting);
 
@@ -216,7 +221,17 @@ impl Worker {
                         self.set(State::Waiting);
                     }
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(100)),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if let Some(u) = &udp {
+                        let mut buf = [0u8; 64];
+                        while let Ok((n, from)) = u.recv_from(&mut buf) {
+                            if buf[..n].starts_with(b"REFLEX?") {
+                                let _ = u.send_to(format!("REFLEX\n{}\n{port}\n", self.name).as_bytes(), from);
+                            }
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
                 Err(e) => return Err(e.into()),
             }
         }
@@ -236,9 +251,13 @@ impl Worker {
         let id = hello.get("id").cloned().unwrap_or_default();
         let code_ok = hello.get("code").is_some_and(|c| *c == self.code);
         let known = !id.is_empty() && accepted_ids().contains(&id);
+        // Con el código escrito a mano se prueba en cada PC encontrado: si no es este, fuera sin preguntar.
+        let by_code = hello.get("mode").is_some_and(|m| m == "code");
 
         let accepted = if code_ok || known {
             true
+        } else if by_code {
+            false
         } else {
             *self.decision.lock().unwrap() = None;
             self.set(State::Asking(phone.clone()));
@@ -255,7 +274,7 @@ impl Worker {
         };
         if !accepted {
             let mut p = vec![0u8];
-            p.extend_from_slice(if code_ok { b"" } else { "rechazado en el PC".as_bytes() });
+            p.extend_from_slice(if by_code { b"code" } else { b"rejected" });
             let _ = write_msg(&mut s, ACCEPT, &p);
             bail!("no se aceptó a {phone}");
         }

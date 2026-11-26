@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- El móvil del icono (mismas coordenadas que assets/icon.svg), reducido a la zona segura. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="1024" android:viewportHeight="1024">
+    <group android:pivotX="512" android:pivotY="512" android:scaleX="0.62" android:scaleY="0.62">
+        <path android:pathData="M528,196h158a76,76 0,0 1,76 76v480a76,76 0,0 1,-76 76h-158a76,76 0,0 1,-76 -76v-480a76,76 0,0 1,76 -76z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="452" android:startY="0" android:endX="762" android:endY="0">
+                    <item android:offset="0" android:color="#FFA9BFFF" />
+                    <item android:offset="1" android:color="#2EA9BFFF" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:fillColor="#FFFFFFFF" android:pathData="M338,196h158a76,76 0,0 1,76 76v480a76,76 0,0 1,-76 76h-158a76,76 0,0 1,-76 -76v-480a76,76 0,0 1,76 -76z" />
+        <path android:fillColor="#FF001489" android:pathData="M384,244h66a12,12 0,0 1,0 24h-66a12,12 0,0 1,0 -24z" />
+    </group>
+</vector>
